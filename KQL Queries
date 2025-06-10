@@ -135,6 +135,6 @@ suricata.eve.event_type:dns and
 
 clientID:("<clientID 1>" OR "<clientID 2>" ) and 
 
-Suricata.eve.dns.rrname: *.*.*.* 
+suricata.eve.dns.rrname: *.*.*.* 
 
  
