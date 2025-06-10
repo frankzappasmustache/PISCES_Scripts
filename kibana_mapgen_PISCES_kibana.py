@@ -18,7 +18,7 @@ def is_public_ip(ip):
         return False
 
 # ── Connect to Elasticsearch ────────────────────────────────────────────────────
-# Option A: include the scheme in the URL
+# Build the Elasticsearch host URL from the Kibana URL
 es_host = KIBANA_URL.replace('5601', '9200')  # e.g. "http://localhost:9200"
 es = Elasticsearch(
     es_host,
