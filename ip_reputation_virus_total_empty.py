@@ -46,7 +46,11 @@ def check_ip_vt(ip):
             'flagged':    flagged
         }
     else:
-        return {'ip': ip, 'error': r.json().get('error', {}).get('message', 'Unknown')}
+        try:
+            err_msg = r.json().get('error', {}).get('message', 'Unknown')
+        except ValueError:
+            err_msg = f'Status {r.status_code}'
+        return {'ip': ip, 'error': err_msg}
 
 # ── Kibana Login + Query ───────────────────────────────────────────────────────
 
