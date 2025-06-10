@@ -104,8 +104,8 @@ def fetch_kibana_hits(size=10000):
 def extract_ips(hits):
     ips = set()
     for hit in hits:
-        src = hit['_source'].get('source',{}).get('ip')
-        dst = hit['_source'].get('destination',{}).get('ip')
+        src = hit['_source'].get('source', {}).get('address')
+        dst = hit['_source'].get('destination', {}).get('address')
         for ip in (src, dst):
             if ip and is_public_ip(ip):
                 ips.add(ip)
