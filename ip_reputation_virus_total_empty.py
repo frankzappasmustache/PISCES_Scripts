@@ -1,22 +1,35 @@
 #!/usr/bin/env python3
-
+import os
 import requests
 import time
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 import ipaddress
+import sys
 
 # ── Configuration ───────────────────────────────────────────────────────────────
-KIBANA_URL    = ''
-KIBANA_USER   = ''
-KIBANA_PASS   = ''
-
+KIBANA_URL   = os.getenv('KIBANA_URL', '').strip()
+KIBANA_USER  = os.getenv('KIBANA_USER', '').strip()
+KIBANA_PASS  = os.getenv('KIBANA_PASS', '').strip()
 INDEX_PATTERN = '*'
-VT_API_KEY    = ''
-VT_URL        = 'https://www.virustotal.com/api/v3/ip_addresses/'
+
+VT_API_KEY   = os.getenv('VT_API_KEY', '').strip()
+# VT_URL stays hard-coded
+VT_URL       = 'https://www.virustotal.com/api/v3/ip_addresses/'
+CLIENT_IDS   = [c for c in os.getenv('CLIENT_IDS', '').split(',') if c]
+
+# Verify the essentials:
+if not KIBANA_URL:
+    print("❌ ERROR: KIBANA_URL is not set. Make sure you’ve exported it (including https://…) and restart.")
+    sys.exit(1)
+if not KIBANA_USER or not KIBANA_PASS:
+    print("❌ ERROR: KIBANA_USER and/or KIBANA_PASS not set.")
+    sys.exit(1)
+if not VT_API_KEY:
+    print("❌ ERROR: VT_API_KEY is not set.")
+    sys.exit(1)
 
 SEVERITIES    = [1, 2]
-CLIENT_IDS    = ["", ""]
 PER_RUN_LIMIT = 20
 VT_PER_MINUTE = 4
 DAILY_LIMIT   = 500
@@ -126,7 +139,10 @@ def write_to_excel(results, filename='ip_reputation_results.xlsx'):
             r.get('reputation','N/A'),
             r.get('error','')
         ])
-        if r.get('flagged'):
+        # only highlight if there are malicious or suspicious counts
+        malicious_count   = r.get('malicious', 0) or 0
+        suspicious_count  = r.get('suspicious', 0) or 0
+        if malicious_count > 0 or suspicious_count > 0:
             for c in ws[ws.max_row]:
                 c.fill = red_fill
                 c.font = Font(bold=True)
