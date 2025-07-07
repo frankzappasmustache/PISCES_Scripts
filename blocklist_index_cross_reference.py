@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import requests
 import datetime
 import pandas as pd
@@ -24,6 +22,7 @@ STATIC_BLOCKLIST_URLS = [
     "https://malc0de.com/bl/IP_Blacklist.txt",                 # Malc0de
     "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt"       # SSLBL
 ]
+
 BATCH_SIZE = 500  # Number of IPs per query batch
 
 # === FUNCTIONS ===
@@ -68,7 +67,6 @@ def query_kibana(query_body):
     resp = requests.post(url, json=query_body, headers=headers, auth=(KIBANA_USER, KIBANA_PASS))
     resp.raise_for_status()
     return resp.json().get("hits", {}).get("hits", [])
-
 
 if __name__ == "__main__":
     # Compute dynamic time for api.blocklist.de (UTC now minus 2 hours)
@@ -120,4 +118,5 @@ if __name__ == "__main__":
     df = pd.DataFrame(rows)
     out_file = os.getenv("OUTPUT_FILE", "blocklist_hits.xlsx")
     df.to_excel(out_file, index=False)
+    
     print(f"Results written to {out_file}")
