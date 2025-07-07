@@ -5,6 +5,10 @@ include/
 lib/
 lib64/
 share/
+etc/
+etc/jupyter
+.ipynb_checkpoints/
+
 pyvenv.cfg
 
 # results spreadsheet
