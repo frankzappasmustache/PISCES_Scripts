@@ -7,12 +7,12 @@ from openpyxl.styles import Font, PatternFill
 import ipaddress
 
 # ── Configuration ───────────────────────────────────────────────────────────────
-KIBANA_URL    = os.getenv("KIBANA_URL", "")
-KIBANA_USER   = os.getenv("KIBANA_USER", "")
-KIBANA_PASS   = os.getenv("KIBANA_PASS", "")
+KIBANA_URL    = ''
+KIBANA_USER   = ''
+KIBANA_PASS   = ''
 
-INDEX_PATTERN = os.getenv("INDEX_PATTERN", "")
-VT_API_KEY    = os.getenv("VT_API_KEY", "")
+INDEX_PATTERN = '*'
+VT_API_KEY    = ''
 VT_URL        = 'https://www.virustotal.com/api/v3/ip_addresses/'
 
 SEVERITIES    = [1, 2]
