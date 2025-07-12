@@ -80,7 +80,7 @@ for kind, marker, label in [
         s=50, marker=marker, alpha=0.7, label=label, edgecolors='k'
     )
 
-plt.title("Geo-Locations for Hits in Last Hour (burien & poulsbo)")
+plt.title("Geo-Locations for Hits in Last Hour")
 plt.xlabel("Longitude")
 plt.ylabel("Latitude")
 plt.legend()
