@@ -142,15 +142,3 @@ Alerts with malicious or suspicious content minus false positives:
 suricata.eve.alert.signature:* AND suricata.eve.alert.signature : ("*MALWARE*" OR "*TROJAN*" OR "*VIRUS*" OR "*BACKDOOR*" OR "*BOTNET*" OR "*EXPLOIT*" OR "*SHELLCODE*" OR "*INJECTION*" OR "*C2*" OR "*COMMAND AND CONTROL*" OR "*METERPRETER*" OR "*EMOTET*" OR "*QAKBOT*" OR "*TRICKBOT*" OR "*ICEDID*" OR "*DRIDEX*" OR "*AGENT TESLA*" OR "*RAT*" OR "*REMOTE ACCESS*" OR "*REVERSE SHELL*" OR "*EXECUTION*" OR "*DLL INJECTION*"
 
 ) AND NOT suricata.eve.alert.signature:(SURICATA* OR "ET MALWARE Windows qwinsta Microsoft Windows DOS prompt command exit OUTBOUND" OR "ET INFO EXE IsDebuggerPresent (Used in Malware Anti-Debugging)")
-
-
-
-User agent search exclusion filter to get rid of known benign user agents and a couple benign domains:
-
-suricata.eve.http.http_user_agent:* AND NOT suricata.eve.http.http_user_agent: (
-
-  "Windows-Update-Agent*" OR "downloader*" OR "OUTLOOK*" OR "libdnf*" OR "Yealink*" OR "HIP*" OR "GoogleUpdater*" OR "Debian*" OR "urlgrabber*" OR "DLNADOC*" OR "Mozilla*" OR "HTTP Image Reader" OR "Designjet*" OR "Auvik*" OR "HiIpcam*" OR "aws-sdk-cpp*" OR "NetworkCTS" OR "CaptiveNetworkSupport*" OR "Netflix*" OR "NESSUS*" OR "Nessus*" OR "FileTransport*" OR "SeaPort*" OR "Roku*" OR "Microsoft-CryptoAPI*" OR "AutodeskSync*" OR "WebLink*" OR "Blackbox Exporter/0.26.0" OR "AVG Antivirus" OR "Gibbon*" OR "Rain Bird/LNKSS" OR "Microsoft NCSI" OR "Microsoft-CryptoAPI/10.0" OR "fwupd" OR "AirControl Agent v1.0" OR "Microsoft-Delivery-Optimization/10.0" OR "Microsoft-Delivery-Optimization/10.1" OR "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.2; WOW64; Trident/7.0; .NET4.0C; .NET4.0E; .NET CLR 2.0.50727;NET CLR 3.0.30729; .NET CLR 3.5.30729; Zoom 3.6.0)" OR "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0" OR "cpprestsdk/2.9.0" OR "log-c-lite_0.1.0" OR "Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.0" OR "Windows-Update-Agent/1407.2505.15022.0 Client-Protocol/2.90" OR "Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.51" OR "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko" OR "WSDAPI" OR "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Word 16.0.18827; Pro)") AND NOT suricata.eve.http.hostname.keyword : ("*.meraki.com" OR "download.comodo.com" OR "*.avcdn.net" OR "*.voiceinteraction.pt")
-
-
-
- 
