@@ -7,6 +7,10 @@ lib/
 lib64/
 share/
 .venv/
+etc/
+etc/jupyter
+.ipynb_checkpoints/
+93f816276313c55146b0f51d3528f07af58114ca
 pyvenv.cfg
 
 # results spreadsheet
