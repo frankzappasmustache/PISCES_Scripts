@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog
 import requests
 import math
+import re
 
 # --- ANSI COLOR CODES (Vim Airline Inspired) ---
 class Colors:
@@ -198,7 +199,10 @@ def run_threat_intel_script(ip_addresses):
     except FileNotFoundError:
         return f"{Colors.RED}ERROR: 'advanced-threat-intel-v3.py' not found. Make sure it's in the same directory.{Colors.ENDC}"
     except subprocess.CalledProcessError as e:
-        return f"{Colors.RED}ERROR: Threat intel script failed with exit code {e.returncode}:\n{e.stderr}{Colors.ENDC}"
+        # Sanitize the stderr from the external script to remove any exposed API keys.
+        # This is a security measure to prevent keys from being posted into a public ticket.
+        stderr_sanitized = re.sub(r'key=[a-zA-Z0-9]+', 'key={api-key-redacted}', e.stderr)
+        return f"{Colors.RED}ERROR: Threat intel script failed with exit code {e.returncode}:\n{stderr_sanitized}{Colors.ENDC}"
 
 def select_file():
     """Opens a file dialog to select ONE file and returns its path."""

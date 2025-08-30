@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 import requests
+import brotli
 from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.panel import Panel
@@ -68,170 +69,109 @@ def print_error(message):
     """Prints an error message in a styled panel."""
     console.print(Panel(f"[bold red]ERROR:[/bold red] {message}", title="Error", border_style="red"))
 
+def handle_api_error(e, service_name, indicator):
+    """Sanitizes and prints API request errors to avoid exposing keys."""
+    try:
+        if isinstance(e, requests.exceptions.HTTPError):
+            url = e.request.url
+            # Replace API key in URL with a placeholder for safe logging
+            sanitized_url = re.sub(r'(key|apikey|api_key)=[^&]+', r'\1={API_KEY}', url, flags=re.IGNORECASE)
+            
+            # Try to get a specific error detail from the JSON response
+            try:
+                error_detail = e.response.json().get('errors', [{}])[0].get('detail', e.response.text)
+            except requests.exceptions.JSONDecodeError:
+                error_detail = e.response.text
+
+            print_error(f"{service_name} API request for {indicator} failed.\nURL: {sanitized_url}\nDetail: {error_detail}")
+        else:
+            print_error(f"An unexpected error occurred with {service_name} for {indicator}: {e}")
+    except Exception as final_e:
+        # Fallback for errors during the error handling itself
+        print_error(f"An unexpected error occurred during error handling for {service_name}: {final_e}")
+
 
 # --- Data Gathering Functions ---
 
 def scrape_talos(indicator, driver):
     """Scrapes the Cisco Talos Intelligence page by mimicking the user's search workflow."""
     console.print(f"[cyan]Querying Cisco Talos for {indicator}...[/cyan]")
-    
+    report_data = []
     try:
-        # Navigate to the main page
         driver.get("https://talosintelligence.com/")
-        
-        # Wait for the search box to be ready and enter the indicator
         search_box = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.ID, "new-search-form-input"))
         )
         search_box.send_keys(indicator)
         search_box.send_keys(Keys.RETURN)
-
-        # Wait for the results page to load by looking for a key element
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CLASS_NAME, "reputation-details-container"))
         )
         soup = BeautifulSoup(driver.page_source, 'lxml')
-
-        table = Table(title="Cisco Talos Intelligence", show_header=True, header_style="bold blue", row_styles=["", "on #202020"])
-        table.add_column("Attribute", style="dim")
-        table.add_column("Value")
-
-        table.add_row("IP Address / Domain", indicator)
         
-        web_rep_element = soup.find('span', class_='web-rep-label')
-        if web_rep_element:
-            table.add_row("Web Reputation", web_rep_element.text.strip())
-            
-        email_rep_element = soup.find('div', class_='email-rep-details')
-        if email_rep_element:
-            rep_label = email_rep_element.find('div', class_='rep-label')
-            if rep_label:
-                table.add_row("Email Reputation", rep_label.text.strip())
-
-        details = soup.find_all('div', class_='rep-details-stats-item')
-        for item in details:
-            label_element = item.find('div', class_='reputation-details-stats-item-label')
-            value_element = item.find('div', class_='reputation-details-stats-item-value')
-            if label_element and value_element:
-                label = label_element.text.strip()
-                value = value_element.text.strip()
-                if "Hostname" in label:
-                    table.add_row("Hostname", value)
-                elif "Domain" in label:
-                    table.add_row("Domain", value)
-        
-        owner_div = soup.find('div', class_='whois-data')
-        if owner_div:
-            owner_info = owner_div.find_all('div')
-            if len(owner_info) > 1:
-                 table.add_row("Network Owner", owner_info[1].text.strip())
-
-        console.print(table)
-
-    except TimeoutException:
-        print_error("Failed to scrape Cisco Talos: The page timed out or the key content did not load.")
+        if web_rep_element := soup.find('span', class_='web-rep-label'):
+            report_data.append(("Web Reputation", web_rep_element.text.strip()))
+        if email_rep_element := soup.find('div', class_='email-rep-details'):
+            if rep_label := email_rep_element.find('div', class_='rep-label'):
+                report_data.append(("Email Reputation", rep_label.text.strip()))
+        if owner_div := soup.find('div', class_='whois-data'):
+            if len(owner_info := owner_div.find_all('div')) > 1:
+                report_data.append(("Network Owner", owner_info[1].text.strip()))
+        return report_data
     except Exception as e:
-        print_error(f"Failed to scrape Cisco Talos. The website structure may have changed. Error: {e}")
-
+        print_error(f"Failed to scrape Cisco Talos for {indicator}. Error: {e}")
+        return None
 
 def scrape_xforce(indicator, driver):
     """Scrapes the IBM X-Force Exchange page by mimicking the user's search workflow."""
     console.print(f"[cyan]Querying IBM X-Force for {indicator}...[/cyan]")
-    
+    report_data = []
     try:
-        # Navigate to the main page
         driver.get("https://exchange.xforce.ibmcloud.com/")
-
-        # Handle cookie banner
         try:
-            cookie_button = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler"))
-            )
+            cookie_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler")))
             cookie_button.click()
             time.sleep(1)
         except TimeoutException:
-            console.print("[dim]No cookie banner found on IBM X-Force, proceeding...[/dim]")
-
-        # Handle tutorial pop-up
-        try:
-            skip_button = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Skip tutorial')]"))
-            )
-            skip_button.click()
-            time.sleep(1)
-        except TimeoutException:
-            console.print("[dim]No tutorial pop-up found on IBM X-Force, proceeding...[/dim]")
-
-        # Find the search box, enter indicator, and submit
+            pass  # No cookie banner
         search_box = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Search by Application name, IP address, URL, Vulnerability, MD5, #Tag...']"))
+            EC.presence_of_element_located((By.XPATH, "//input[contains(@placeholder, 'Search by')]"))
         )
         search_box.send_keys(indicator)
         search_box.send_keys(Keys.RETURN)
-
-        # Wait for the details table on the results page to be visible
-        WebDriverWait(driver, 20).until(
-            EC.visibility_of_element_located((By.CLASS_NAME, "details-table"))
-        )
+        WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, "details-table")))
         soup = BeautifulSoup(driver.page_source, 'lxml')
-
-        table = Table(title="IBM X-Force Exchange", show_header=True, header_style="bold cyan", row_styles=["", "on #202020"])
-        table.add_column("Attribute", style="dim")
-        table.add_column("Value")
-
-        risk_element = soup.find('span', {'data-test-id': 'risk-score-value'})
-        if risk_element:
-            table.add_row("Risk Score", risk_element.text.strip())
-        
-        cat_heading = soup.find('h5', string='Categorization')
-        if cat_heading:
-            cat_container = cat_heading.find_parent('div').find_next_sibling('div')
-            if cat_container:
+        if risk_element := soup.find('span', {'data-test-id': 'risk-score-value'}):
+            report_data.append(("Risk Score", risk_element.text.strip()))
+        if cat_heading := soup.find('h5', string='Categorization'):
+            if cat_container := cat_heading.find_parent('div').find_next_sibling('div'):
                 categories = [a.text.strip() for a in cat_container.find_all('a')]
-                table.add_row("Categorization", ", ".join(categories))
-
-        details_table = soup.find('table', class_='details-table')
-        if details_table:
-            rows = details_table.find_all('tr')
-            for row in rows:
+                report_data.append(("Categorization", ", ".join(categories)))
+        if details_table := soup.find('table', class_='details-table'):
+            for row in details_table.find_all('tr'):
                 cells = row.find_all('td')
                 if len(cells) == 2:
-                    key = cells[0].text.strip()
-                    value = cells[1].text.strip()
-                    if "Location" in key:
-                        table.add_row("Location", value)
-                    elif "ASN" in key:
-                        table.add_row("ASN", value)
-
-        console.print(table)
-
-    except TimeoutException:
-        print_error("Failed to scrape IBM X-Force: The page timed out or the key content did not load.")
+                    key, value = cells[0].text.strip(), cells[1].text.strip()
+                    if "Location" in key: report_data.append(("Location", value))
+                    elif "ASN" in key: report_data.append(("ASN", value))
+        return report_data
     except Exception as e:
-        print_error(f"Failed to scrape IBM X-Force. Error: {e}")
-
-
-# --- API Query Functions ---
+        print_error(f"Failed to scrape IBM X-Force for {indicator}. Error: {e}")
+        return None
 
 def query_virustotal(indicator):
-    """Queries the VirusTotal API for IP or domain information."""
-    if not API_KEYS["virustotal"]:
-        print_error("VirusTotal API key (VT_API_KEY) is not set. Skipping.")
-        return None, None
+    """Queries the VirusTotal API and returns main data and vendor data."""
+    if not API_KEYS["virustotal"]: return None, None
     console.print(f"[cyan]Querying VirusTotal for {indicator}...[/cyan]")
-    
     indicator_type = "ip_addresses" if is_ipv4(indicator) else "domains"
     url = f"https://www.virustotal.com/api/v3/{indicator_type}/{indicator}"
     headers = {"x-apikey": API_KEYS["virustotal"]}
-
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         data = response.json().get("data", {}).get("attributes", {})
-
         stats = data.get("last_analysis_stats", {})
         malicious_vendors = stats.get("malicious", 0)
-        
         main_data = [
             ("Malicious Vendors", f"[red]{malicious_vendors}[/red]" if malicious_vendors > 0 else "[green]0[/green]"),
             ("Country", data.get("country", "N/A")),
@@ -239,109 +179,68 @@ def query_virustotal(indicator):
             ("AS Owner", data.get("as_owner", "N/A")),
             ("ASN", str(data.get("asn", "N/A")))
         ]
-
         vendor_data = []
         analysis_results = data.get("last_analysis_results", {})
         for vendor, result in analysis_results.items():
             category = result.get("category", "N/A")
             if category not in ["harmless", "undetected"]:
-                 vendor_data.append((vendor, result.get("result"), f"[yellow]{category}[/yellow]"))
-
+                vendor_data.append((vendor, result.get("result"), f"[yellow]{category}[/yellow]"))
         return main_data, vendor_data
     except Exception as e:
-        print_error(f"VirusTotal API request for {indicator} failed: {e}")
+        handle_api_error(e, "VirusTotal", indicator)
         return None, None
 
-
 def query_otx(indicator):
-    """Queries AlienVault OTX for IP or domain information."""
-    if not API_KEYS["otx"]:
-        print_error("AlienVault OTX API key is not set. Skipping.")
-        return None
-
+    """Queries AlienVault OTX and returns data as a list of tuples."""
+    if not API_KEYS["otx"]: return None
+    console.print(f"[cyan]Querying AlienVault OTX for {indicator}...[/cyan]")
     indicator_type = "IPv4" if is_ipv4(indicator) else "domain"
     url = f"https://otx.alienvault.com/api/v1/indicators/{indicator_type}/{indicator}/general"
     headers = {"X-OTX-API-KEY": API_KEYS["otx"]}
-
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         data = response.json()
-        
         related_pulses = data.get("pulse_info", {}).get("pulses", [])
-        all_tags = set()
-        for pulse in related_pulses:
-            for tag in pulse.get("tags", []):
-                all_tags.add(tag)
-
-        cves = set()
-        for pulse in related_pulses:
-            for indicator_data in pulse.get("indicators", []):
-                if 'cve' in indicator_data.get('indicator', '').lower():
-                    cves.add(indicator_data.get('indicator'))
-        
+        all_tags = {tag for pulse in related_pulses for tag in pulse.get("tags", [])}
         return [
-            ("Indicator", data.get("indicator", "N/A")),
             ("Pulse Count", str(data.get("pulse_info", {}).get("count", 0))),
             ("Location", f"{data.get('city', 'N/A')}, {data.get('country_name', 'N/A')}"),
             ("ASN", data.get("asn", "N/A")),
-            ("Related Tags", ", ".join(sorted(list(all_tags))) if all_tags else "N/A"),
-            ("Exploited CVEs", ", ".join(cves) if cves else "None found in recent pulses")
+            ("Related Tags", ", ".join(sorted(list(all_tags))) if all_tags else "N/A")
         ]
-
-    except requests.exceptions.HTTPError as e:
-        print_error(f"AlienVault OTX API request failed: {e}")
-        return None
     except Exception as e:
-        print_error(f"An unexpected error occurred with AlienVault OTX: {e}")
+        handle_api_error(e, "AlienVault OTX", indicator)
         return None
-
 
 def query_greynoise(indicator):
-    """Queries the GreyNoise Enterprise API for IP information."""
-    if not is_ipv4(indicator):
-        return None
-    if not API_KEYS["greynoise"]:
-        print_error("GreyNoise API key is not set. Skipping.")
-        return None
-
+    """Queries the GreyNoise Enterprise API and returns data as a dictionary."""
+    if not is_ipv4(indicator): return None
+    if not API_KEYS["greynoise"]: return None
+    console.print(f"[cyan]Querying GreyNoise for {indicator}...[/cyan]")
     url = f"https://api.greynoise.io/v3/ip/{indicator}"
     headers = {"key": API_KEYS["greynoise"]}
-    
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-             print_error(f"IP '{indicator}' not found in GreyNoise.")
-        else:
-             print_error(f"GreyNoise API request failed: {e}")
-        return None
     except Exception as e:
-        print_error(f"An unexpected error occurred with GreyNoise: {e}")
+        handle_api_error(e, "GreyNoise", indicator)
         return None
-
 
 def query_abuseipdb(indicator):
-    """Queries the AbuseIPDB API for all available information."""
-    if not is_ipv4(indicator):
-        return None
-    if not API_KEYS["abuseipdb"]:
-        print_error("AbuseIPDB API key is not set. Skipping.")
-        return None
-
+    """Queries the AbuseIPDB API and returns data as a list of tuples."""
+    if not is_ipv4(indicator): return None
+    if not API_KEYS["abuseipdb"]: return None
+    console.print(f"[cyan]Querying AbuseIPDB for {indicator}...[/cyan]")
     url = "https://api.abuseipdb.com/api/v2/check"
     params = {"ipAddress": indicator, "maxAgeInDays": "90", "verbose": True}
     headers = {"Key": API_KEYS["abuseipdb"], "Accept": "application/json"}
-    
     try:
         response = requests.get(url, headers=headers, params=params)
         response.raise_for_status()
         data = response.json().get("data", {})
-        
         abuse_score = data.get("abuseConfidenceScore", 0)
-        
         return [
             ("Abuse Confidence", f"[red]{abuse_score}%[/red]" if abuse_score > 0 else "[green]0%[/green]"),
             ("Total Reports", str(data.get("totalReports", "N/A"))),
@@ -351,32 +250,21 @@ def query_abuseipdb(indicator):
             ("Usage Type", data.get("usageType", "N/A")),
             ("Domain Name", data.get("domain", "N/A")),
             ("Hostname(s)", ", ".join(data.get("hostnames", [])) if data.get("hostnames") else "N/A"),
-            ("Is Whitelisted", str(data.get("isWhitelisted", "N/A"))),
-            ("Last Reported", data.get("lastReportedAt", "N/A"))
         ]
-
-    except requests.exceptions.HTTPError as e:
-        print_error(f"AbuseIPDB API request failed: {e.response.json().get('errors', [{}])[0].get('detail')}")
-        return None
     except Exception as e:
-        print_error(f"An unexpected error occurred with AbuseIPDB: {e}")
+        handle_api_error(e, "AbuseIPDB", indicator)
         return None
 
 def query_shodan(indicator):
     """Queries the Shodan API for IP information."""
     if not is_ipv4(indicator): return None, None, None
-    if not API_KEYS["shodan"]:
-        print_error("Shodan API key is not set. Skipping.")
-        return None, None, None
-    
+    if not API_KEYS["shodan"]: return None, None, None
     console.print(f"[cyan]Querying Shodan for {indicator}...[/cyan]")
     url = f"https://api.shodan.io/shodan/host/{indicator}?key={API_KEYS['shodan']}"
-    
     try:
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-        
         main_details = [
             ("Organization", data.get("org", "N/A")),
             ("ISP", data.get("isp", "N/A")),
@@ -384,43 +272,33 @@ def query_shodan(indicator):
             ("Hostnames", ", ".join(data.get("hostnames", [])) if data.get("hostnames") else "N/A"),
             ("Location", f"{data.get('city', 'N/A')}, {data.get('country_name', 'N/A')}")
         ]
-        
         ports = data.get("ports", [])
         vulns = data.get("vulns", [])
-        
         return main_details, ports, vulns
     except Exception as e:
-        print_error(f"Shodan API request for {indicator} failed: {e}")
+        handle_api_error(e, "Shodan", indicator)
         return None, None, None
-
 
 def query_urlscan(indicator):
     """Searches URLScan for recent scans of an IP or domain."""
     if not API_KEYS["urlscan"]: return None
     console.print(f"[cyan]Querying URLScan for {indicator}...[/cyan]")
-
     query_type = "ip" if is_ipv4(indicator) else "domain"
     url = f"https://urlscan.io/api/v1/search/?q={query_type}:{indicator}"
-    
     try:
         response = requests.get(url)
         response.raise_for_status()
         results = response.json().get("results", [])
-        
         if not results:
             return [("Status", "No recent scans found")]
-
         latest_scan = results[0]
         scan_id = latest_scan.get("task", {}).get("uuid")
-        
         result_url = f"https://urlscan.io/api/v1/result/{scan_id}/"
         result_response = requests.get(result_url)
         result_response.raise_for_status()
         result_data = result_response.json()
-        
         verdict = result_data.get("verdicts", {}).get("overall", {})
         malicious = verdict.get("malicious", False)
-        
         return [
             ("Status", "[red]Malicious[/red]" if malicious else "[green]Clean[/green]"),
             ("Scan Date", latest_scan.get("task", {}).get("time", "N/A")),
@@ -428,7 +306,7 @@ def query_urlscan(indicator):
             ("Result URL", result_data.get("task", {}).get("reportURL", "N/A"))
         ]
     except Exception as e:
-        print_error(f"URLScan API request for {indicator} failed: {e}")
+        handle_api_error(e, "URLScan", indicator)
         return None
 
 # --- Formatting Functions ---
@@ -440,19 +318,15 @@ def format_for_ticket(indicator, all_data):
         f"[bold]Threat Intelligence Report for: {indicator}[/bold]",
         "="*60
     ]
-
     service_map = {
         "virustotal": "VirusTotal", "xforce": "IBM X-Force", "otx": "AlienVault OTX",
         "greynoise": "GreyNoise", "abuseipdb": "AbuseIPDB", "talos": "Cisco Talos",
         "shodan": "Shodan", "urlscan": "URLScan"
     }
-
     for service_key, data in all_data.items():
         if not data or (isinstance(data, tuple) and all(v is None for v in data)):
             continue
-        
         output.append(f"\n[bold underline]---------- {service_map.get(service_key, service_key.title())} ----------[/bold underline]")
-        
         if service_key == "virustotal":
             main_data, vendor_data = data
             if main_data:
@@ -462,35 +336,30 @@ def format_for_ticket(indicator, all_data):
                 output.append("\n  [bold]Vendor Analysis Breakdown:[/bold]")
                 for vendor, result, category in vendor_data:
                     output.append(f"    - {vendor:<25}: {result} ({category})")
-
         elif service_key == "shodan":
             main_details, ports, vulns = data
             if main_details:
                 for key, value in main_details:
                     output.append(f"  [dim]{key:<25}:[/dim] {value}")
             if ports:
-                output.append(f"\n  [bold]Open Ports:[/bold] {', '.join(map(str, ports))}")
+                output.append(f"  [dim]{'Open Ports':<25}:[/dim] {', '.join(map(str, ports))}")
             if vulns:
                 output.append("\n  [bold]Vulnerabilities:[/bold]")
                 for vuln in vulns:
                     output.append(f"    - [red]{vuln}[/red]")
-
         elif isinstance(data, list):
             for key, value in data:
                 output.append(f"  [dim]{key:<25}:[/dim] {value}")
-        
         elif isinstance(data, dict) and service_key == "greynoise":
             if bsi := data.get("business_service_intelligence", {}):
                 if bsi.get("found"):
                     output.append("\n  [bold]Business Service Intelligence:[/bold]")
                     for key, val in bsi.items():
                         if key != "found": output.append(f"    [dim]{key.replace('_', ' ').title():<23}:[/dim] {val}")
-            
             if isi := data.get("internet_scanner_intelligence", {}):
                 if isi.get("found"):
                     output.append("\n  [bold]Internet Scanner Intelligence:[/bold]")
-                    metadata = isi.pop("metadata", {})
-                    tags = isi.pop("tags", [])
+                    metadata = isi.pop("metadata", {}); tags = isi.pop("tags", [])
                     for key, val in isi.items():
                         if key not in ["found", "raw_data"]:
                             output.append(f"    [dim]{key.replace('_', ' ').title():<23}:[/dim] {val}")
@@ -498,26 +367,21 @@ def format_for_ticket(indicator, all_data):
                         output.append(f"    [dim]{key.replace('_', ' ').title():<23}:[/dim] {val}")
                     if tags:
                         output.append(f"    [dim]{'Tags':<23}:[/dim] {', '.join(t['name'] for t in tags)}")
-
     return "\n".join(output)
 
 def display_as_tables(indicator, all_data):
     """Displays the collected data in rich tables."""
     console.rule(f"[bold]Threat Intelligence Report for: {indicator}[/bold]")
-    
-    # Unpack all data
     vt_main, vt_vendor = all_data.get("virustotal", (None, None))
     otx_data = all_data.get("otx")
     greynoise_data = all_data.get("greynoise")
     abuseipdb_data = all_data.get("abuseipdb")
     shodan_main, shodan_ports, shodan_vulns = all_data.get("shodan", (None, None, None))
     urlscan_data = all_data.get("urlscan")
-    
-    # --- Print Tables ---
+
     if vt_main:
         vt_table = Table(title="VirusTotal Intelligence", show_header=True, header_style="bold magenta", row_styles=["", "on #202020"])
-        vt_table.add_column("Attribute", style="dim")
-        vt_table.add_column("Value")
+        vt_table.add_column("Attribute", style="dim"); vt_table.add_column("Value")
         for key, val in vt_main: vt_table.add_row(key, val)
         console.print(vt_table)
         if vt_vendor:
@@ -608,6 +472,8 @@ def main():
                     "abuseipdb": query_abuseipdb(indicator),
                     "shodan": (shodan_main, shodan_ports, shodan_vulns),
                     "urlscan": query_urlscan(indicator),
+                    # "xforce": scrape_xforce(indicator, driver),
+                    # "talos": scrape_talos(indicator, driver)
                 }
                 full_report_text.append(format_for_ticket(indicator, report_data))
             console.rule("[bold green]Report Complete[/bold green]")
@@ -615,7 +481,7 @@ def main():
                 console.print(report)
         else: # Table format
             for indicator in args.indicators:
-                display_as_tables(indicator, {
+                report_data = {
                     "virustotal": query_virustotal(indicator),
                     "otx": query_otx(indicator),
                     "greynoise": query_greynoise(indicator),
@@ -624,7 +490,8 @@ def main():
                     "urlscan": query_urlscan(indicator),
                     # "xforce": scrape_xforce(indicator, driver),
                     # "talos": scrape_talos(indicator, driver)
-                })
+                }
+                display_as_tables(indicator, report_data)
 
     finally:
         if driver:
@@ -635,3 +502,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
