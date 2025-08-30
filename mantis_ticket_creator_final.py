@@ -200,13 +200,13 @@ def run_threat_intel_script(ip_addresses):
     except subprocess.CalledProcessError as e:
         return f"{Colors.RED}ERROR: Threat intel script failed with exit code {e.returncode}:\n{e.stderr}{Colors.ENDC}"
 
-def select_files():
-    """Opens a file dialog to select one or more files and returns their paths."""
+def select_file():
+    """Opens a file dialog to select ONE file and returns its path."""
     print(f"{Colors.CYAN}Opening file selection dialog...{Colors.ENDC}")
     root = tk.Tk()
     root.withdraw()
-    filepaths = filedialog.askopenfilenames()
-    return filepaths
+    filepath = filedialog.askopenfilename()
+    return filepath
 
 # --- HELPER FUNCTIONS FOR SUB-FIELD SELECTION ---
 def _flatten_dict_gen(d, parent_key, sep):
@@ -254,14 +254,13 @@ def display_in_columns(field_list):
     except OSError:
         terminal_width = 80 # Default width if terminal size can't be determined
 
-    # Prepare formatted strings for display
     display_list = []
     for i, (path, value) in enumerate(field_list):
         is_parent = isinstance(value, dict)
         display_list.append(f"  {i+1:<3}: {path}{' (Parent)' if is_parent else ''}")
 
     max_len = max(len(s) for s in display_list) if display_list else 0
-    col_width = max_len + 4  # Add padding
+    col_width = max_len + 4
     num_cols = max(1, terminal_width // col_width)
     num_rows = math.ceil(len(display_list) / num_cols)
 
@@ -323,11 +322,25 @@ def main():
     if not hit_data:
         sys.exit(1)
 
+    flow_data = hit_data.get('suricata', {}).get('eve', {}).get('flow', {})
+    flow_details = {
+        "packets_to_server": flow_data.get('pkts_toserver'),
+        "packets_to_client": flow_data.get('pkts_toclient'),
+        "bytes_to_server": flow_data.get('bytes_toserver'),
+        "bytes_to_client": flow_data.get('bytes_toclient')
+    }
+    flow_details_filtered = {k: v for k, v in flow_details.items() if v is not None}
+
     primary_details = {
-        "timestamp": hit_data.get('@timestamp'), "destination": hit_data.get('destination'),
-        "source": hit_data.get('source'), "network": hit_data.get('network'),
+        "timestamp": hit_data.get('@timestamp'),
+        "destination": hit_data.get('destination'),
+        "source": hit_data.get('source'),
+        "network": hit_data.get('network'),
         "clientID": hit_data.get('clientID')
     }
+    if flow_details_filtered:
+        primary_details['flow_details'] = flow_details_filtered
+    
     primary_details_filtered = {k: v for k, v in primary_details.items() if v is not None}
 
     description = "== ELK Log Details ==\n"
@@ -404,15 +417,24 @@ def main():
     attachments = []
     attach_files_choice = input(f"\n{Colors.ORANGE}Attach any files (e.g., screenshots)? (y/n): {Colors.ENDC}").lower()
     if attach_files_choice == 'y':
-        files_to_attach = select_files()
-        if files_to_attach:
-            print(f"{Colors.CYAN}Preparing {len(files_to_attach)} file(s) for upload...{Colors.ENDC}")
-            for fpath in files_to_attach:
-                try:
-                    with open(fpath, "rb") as f:
-                        file_content = base64.b64encode(f.read()).decode('utf-8')
-                        attachments.append({"name": os.path.basename(fpath), "content": file_content})
-                except Exception as e: print(f"{Colors.RED}Could not read or encode file {fpath}: {e}{Colors.ENDC}")
+        while True:
+            filepath = select_file()
+            if not filepath:
+                print(f"{Colors.ORANGE}File selection cancelled.{Colors.ENDC}")
+                break
+            
+            print(f"{Colors.CYAN}Preparing file: {os.path.basename(filepath)}...{Colors.ENDC}")
+            try:
+                with open(filepath, "rb") as f:
+                    file_content = base64.b64encode(f.read()).decode('utf-8')
+                    attachments.append({"name": os.path.basename(filepath), "content": file_content})
+                    print(f"{Colors.GREEN}Successfully added {os.path.basename(filepath)}. Total attachments: {len(attachments)}{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.RED}Could not read or encode file {filepath}: {e}{Colors.ENDC}")
+
+            add_another = input(f"{Colors.ORANGE}Attach another file? (y/n): {Colors.ENDC}").lower()
+            if add_another != 'y':
+                break
 
     issue_payload = {
         "summary": summary, "description": description, "project": {"id": int(project_id)},
@@ -443,3 +465,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
