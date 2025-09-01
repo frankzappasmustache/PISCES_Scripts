@@ -68,7 +68,9 @@ def fetch_kibana_data(hit_id):
                 "bool": {
                     "must": [
                         {"term": {"_id": hit_id}},
-                        {"exists": {"field": "suricata"}}
+                        # MODIFIED: Made the query more specific to find actual Suricata events,
+                        # not just any document that references suricata (like a policy file).
+                        {"exists": {"field": "suricata.eve.event_type"}}
                     ]
                 }
             },
@@ -89,7 +91,7 @@ def fetch_kibana_data(hit_id):
             
             if not hits:
                 print(f"{Colors.RED}Error: No document found with ID '{hit_id}' that matches the required log format.{Colors.ENDC}")
-                print(f"{Colors.ORANGE}Check your hit ID and ensure your KIBANA_INDEX_PATTERN is correct.{Colors.ENDC}")
+                print(f"{Colors.ORANGE}Check your hit ID and ensure it corresponds to a valid Suricata event.{Colors.ENDC}")
                 return None
             
             print(f"{Colors.GREEN}Successfully fetched data from Kibana.{Colors.ENDC}")
@@ -100,18 +102,17 @@ def fetch_kibana_data(hit_id):
             retry_choice = input(f"{Colors.ORANGE}Would you like to try again? (y/n): {Colors.ENDC}").lower()
             if retry_choice != 'y':
                 return None # Exit if user says no
-            # If user says 'y', the loop will continue automatically
 
         except requests.exceptions.HTTPError as e:
             print(f"{Colors.RED}HTTP Error fetching data from Kibana: {e.response.status_code} {e.response.reason}{Colors.ENDC}")
             if e.response.status_code in [401, 403]:
                 print(f"{Colors.RED}Authentication failed. Your KIBANA_COOKIE may be invalid or expired.{Colors.ENDC}")
             print(f"{Colors.RED}Response body: {e.response.text}{Colors.ENDC}")
-            return None # Non-recoverable error, so we don't retry
+            return None
         
         except (KeyError, IndexError, json.JSONDecodeError) as e:
             print(f"{Colors.RED}Could not parse the response from Kibana. Unexpected format: {e}{Colors.ENDC}")
-            return None # Non-recoverable error
+            return None
 
 def format_dict_for_ticket(data, indent=0):
     """Recursively formats a dictionary for clean, indented ticket display."""
@@ -147,7 +148,6 @@ def is_public_ip(ip_string):
         ip_obj = ipaddress.ip_address(ip_string)
         return ip_obj.is_global
     except ValueError:
-        # The string was not a valid IP address
         return False
 
 def run_threat_intel_script(ip_addresses):
@@ -156,8 +156,6 @@ def run_threat_intel_script(ip_addresses):
         return ""
     
     print(f"\n{Colors.CYAN}Running advanced threat intelligence lookup...{Colors.ENDC}")
-    # --- IMPORTANT ---
-    # Ensure 'advanced-threat-intel-v3.py' is in your PATH or the same directory.
     command = ["python", "advanced-threat-intel-v3.py", "--format", "ticket"] + ip_addresses
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
@@ -166,7 +164,6 @@ def run_threat_intel_script(ip_addresses):
     except FileNotFoundError:
         return f"{Colors.RED}ERROR: 'advanced-threat-intel-v3.py' not found. Make sure it's in the same directory or in your system's PATH.{Colors.ENDC}"
     except subprocess.CalledProcessError as e:
-        # Sanitize the stderr from the external script to prevent exposed API keys.
         stderr_sanitized = re.sub(r'key=[a-zA-Z0-9]+', 'key={api-key-redacted}', e.stderr)
         return f"{Colors.RED}ERROR: Threat intel script failed with exit code {e.returncode}:\n{stderr_sanitized}{Colors.ENDC}"
 
@@ -175,7 +172,7 @@ def select_files():
     print(f"{Colors.CYAN}Opening file selection dialog...{Colors.ENDC}")
     root = tk.Tk()
     root.withdraw()
-    filepaths = filedialog.askopenfilenames() # Allows selecting multiple files
+    filepaths = filedialog.askopenfilenames()
     return filepaths
 
 # --- HELPER FUNCTIONS FOR SUB-FIELD SELECTION ---
@@ -245,7 +242,6 @@ def main():
     if not hit_data:
         sys.exit(1)
 
-    # --- Automatically pull platform info from Kibana hit ---
     platform_info = hit_data.get('host', {}).get('os', {})
     platform_val = platform_info.get('type', 'N/A')
     os_name = platform_info.get('name', 'N/A')
@@ -283,10 +279,9 @@ def main():
 
     print(f"\n{Colors.PURPLE}--- Additional Fields Found in Kibana Hit ---{Colors.ENDC}")
     all_keys = set(hit_data.keys())
-    # Exclude top-level keys already displayed and 'host' since we pulled OS info from it
-    pulled_top_level_keys = set(primary_details_filtered.keys()) | {'host'}
+    pulled_top_level_keys = set(primary_details_filtered.keys()) | {'host', 'suricata'}
     
-    additional_fields_data = {k: hit_data[k] for k in sorted(list(all_keys - pulled_top_level_keys))}
+    additional_fields_data = {k: v for k in sorted(list(all_keys - pulled_top_level_keys)) if hit_data.get(k)}
     
     selectable_fields = list(_flatten_dict_gen(additional_fields_data, '', '.'))
 
@@ -301,7 +296,6 @@ def main():
             initial_indices = parse_selection(extra_fields_choice)
             final_indices = set(initial_indices)
 
-            # If a parent field is selected, automatically add all its non-parent children
             for index in initial_indices:
                 if 0 <= index < len(selectable_fields):
                     path, value = selectable_fields[index]
@@ -310,19 +304,17 @@ def main():
                             if child_path.startswith(path + '.') and not isinstance(child_value, dict):
                                 final_indices.add(i)
 
-            # Use a dictionary to group fields by their top-level parent
             grouped_fields = {}
             for index in sorted(list(final_indices)):
                 if 0 <= index < len(selectable_fields):
                     path, value = selectable_fields[index]
-                    if isinstance(value, dict): continue # Skip parent fields in final output
+                    if isinstance(value, dict): continue
 
                     top_level_key = path.split('.')[0]
                     if top_level_key not in grouped_fields:
                         grouped_fields[top_level_key] = []
                     grouped_fields[top_level_key].append((path, value))
             
-            # Format the output based on the new dot-notation style
             for top_level_key in sorted(grouped_fields.keys()):
                 for path, value in grouped_fields[top_level_key]:
                     description += f"{path}:\n"
@@ -331,7 +323,7 @@ def main():
                             description += f"    - {item}\n"
                     else:
                         description += f"    - {value}\n"
-                description += "\n" # Add a space between groups
+                description += "\n"
 
     steps_to_reproduce = input(f"\n{Colors.ORANGE}Enter Steps to Reproduce (typically the short URL to the Kibana search): {Colors.ENDC}")
 
@@ -367,7 +359,6 @@ def main():
         else:
             print(f"{Colors.ORANGE}No public IPs or domains provided. Skipping threat intel lookup.{Colors.ENDC}")
 
-    # --- Assemble final document content ---
     ticket_content = f"""== SUMMARY ==
 {summary}
 
@@ -384,15 +375,13 @@ OS Version: {os_version}
 {additional_info.strip()}
 """
 
-    # --- Sanitize summary for folder/file name ---
     sanitized_summary = re.sub(r'[<>:"/\\|?*]', '_', summary).strip()
     if not sanitized_summary:
         sanitized_summary = "Untitled Issue"
 
-    # --- Determine base path based on OS ---
     if platform.system() == "Windows":
         base_path = r"C:\Users\dusti\OneDrive - WCC\OneDrive - Whatcom Community College\Documents\PISCES\Issues"
-    else: # Assume Linux/macOS
+    else:
         base_path = "/home/mayibroot/onedrive_wcc/Documents/PISCES/Issues"
     
     issue_folder = os.path.join(base_path, sanitized_summary)
@@ -410,11 +399,8 @@ OS Version: {os_version}
         print(f"{Colors.RED}Error writing to file: {e}{Colors.ENDC}")
         sys.exit(1)
 
-    # --- Open the created file in Sublime Text ---
     print(f"\n{Colors.CYAN}Opening file in Sublime Text...{Colors.ENDC}")
     try:
-        # 'subl' is the command-line helper for Sublime Text.
-        # It should be in the system's PATH.
         subprocess.run(['subl', file_path], check=True)
     except FileNotFoundError:
         print(f"{Colors.RED}Error: 'subl' command not found. Is Sublime Text installed and in your system's PATH?{Colors.ENDC}")
