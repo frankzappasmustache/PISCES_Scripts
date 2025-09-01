@@ -232,11 +232,14 @@ def main():
     """Main function to gather information and create a formatted issue file."""
     check_env_variables()
     print(f"{Colors.PURPLE}{Colors.BOLD}--- Issue Formatter ---{Colors.ENDC}")
+    # Diagnostic print to ensure the correct version is running
+    print(f"{Colors.GREEN}--- Running Script Version: 4.1 (with Index Selection) ---{Colors.ENDC}")
+
 
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
     kibana_hit_id = input(f"{Colors.ORANGE}Enter the Kibana Hit ID to pull data from: {Colors.ENDC}")
     
-    # --- CORRECTED: Index Selection ---
+    # --- Index Selection ---
     print(f"\n{Colors.ORANGE}Select an Index Pattern to Search:{Colors.ENDC}")
     index_options = {"1": "*", "2": "suricata*"}
     print("   1: * (All indices - might be slower)")
