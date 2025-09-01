@@ -236,7 +236,7 @@ def main():
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
     kibana_hit_id = input(f"{Colors.ORANGE}Enter the Kibana Hit ID to pull data from: {Colors.ENDC}")
     
-    # --- ADDED: Index Selection ---
+    # --- CORRECTED: Index Selection ---
     print(f"\n{Colors.ORANGE}Select an Index Pattern to Search:{Colors.ENDC}")
     index_options = {"1": "*", "2": "suricata*"}
     print("   1: * (All indices - might be slower)")
