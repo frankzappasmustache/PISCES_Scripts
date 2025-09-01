@@ -233,7 +233,7 @@ def main():
     check_env_variables()
     print(f"{Colors.PURPLE}{Colors.BOLD}--- Issue Formatter ---{Colors.ENDC}")
     # Diagnostic print to ensure the correct version is running
-    print(f"{Colors.GREEN}--- Running Script Version: 4.2 (with NameError fix) ---{Colors.ENDC}")
+    print(f"{Colors.GREEN}--- Running Script Version: 4.3 (with IP detection fix) ---{Colors.ENDC}")
 
 
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
@@ -298,7 +298,6 @@ def main():
     all_keys = set(hit_data.keys())
     pulled_top_level_keys = set(primary_details_filtered.keys()) | {'host', 'suricata'}
     
-    # --- FIXED NameError HERE ---
     additional_fields_data = {k: hit_data[k] for k in sorted(list(all_keys - pulled_top_level_keys)) if hit_data.get(k)}
     
     selectable_fields = list(_flatten_dict_gen(additional_fields_data, '', '.'))
@@ -352,8 +351,19 @@ def main():
     run_intel_choice = input(f"{Colors.ORANGE}Run advanced threat intel script? (y/n): {Colors.ENDC}").lower()
     if run_intel_choice == 'y':
         suggested_ips = []
+        
+        # --- FIXED: More robust IP address detection ---
+        # First, try the standard ECS fields
         src_ip = hit_data.get('source', {}).get('ip')
         dst_ip = hit_data.get('destination', {}).get('ip')
+
+        # If not found, try the Suricata-specific fields as a fallback
+        if not src_ip or not dst_ip:
+            suricata_eve = hit_data.get('suricata', {}).get('eve', {})
+            if suricata_eve:
+                src_ip = src_ip or suricata_eve.get('src_ip')
+                dst_ip = dst_ip or suricata_eve.get('dest_ip') # Note: Suricata often uses 'dest_ip'
+        # --- END FIX ---
 
         if src_ip and is_public_ip(src_ip):
             suggested_ips.append(src_ip)
