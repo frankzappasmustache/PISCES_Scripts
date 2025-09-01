@@ -233,7 +233,7 @@ def main():
     check_env_variables()
     print(f"{Colors.PURPLE}{Colors.BOLD}--- Issue Formatter ---{Colors.ENDC}")
     # Diagnostic print to ensure the correct version is running
-    print(f"{Colors.GREEN}--- Running Script Version: 4.1 (with Index Selection) ---{Colors.ENDC}")
+    print(f"{Colors.GREEN}--- Running Script Version: 4.2 (with NameError fix) ---{Colors.ENDC}")
 
 
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
@@ -298,7 +298,8 @@ def main():
     all_keys = set(hit_data.keys())
     pulled_top_level_keys = set(primary_details_filtered.keys()) | {'host', 'suricata'}
     
-    additional_fields_data = {k: v for k in sorted(list(all_keys - pulled_top_level_keys)) if hit_data.get(k)}
+    # --- FIXED NameError HERE ---
+    additional_fields_data = {k: hit_data[k] for k in sorted(list(all_keys - pulled_top_level_keys)) if hit_data.get(k)}
     
     selectable_fields = list(_flatten_dict_gen(additional_fields_data, '', '.'))
 
