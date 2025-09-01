@@ -30,12 +30,11 @@ class Colors:
 # --- CONFIGURATION (Loaded from Environment Variables) ---
 KIBANA_URL = os.getenv("KIBANA_URL")
 KIBANA_COOKIE = os.getenv("KIBANA_COOKIE")
-KIBANA_INDEX_PATTERN = os.getenv("KIBANA_INDEX_PATTERN")
 # --- END CONFIGURATION ---
 
 def check_env_variables():
     """Checks if all required environment variables are set and exits if not."""
-    required_vars = ["KIBANA_URL", "KIBANA_COOKIE", "KIBANA_INDEX_PATTERN"]
+    required_vars = ["KIBANA_URL", "KIBANA_COOKIE"]
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:
         print(f"{Colors.RED}!!! CONFIGURATION ERROR !!!{Colors.ENDC}")
@@ -46,15 +45,15 @@ def check_env_variables():
         sys.exit(1)
     return True
 
-def fetch_kibana_data(hit_id):
+def fetch_kibana_data(hit_id, index_pattern):
     """
     Fetches a document using the Kibana Console Proxy API. Includes a retry
     mechanism for recoverable network errors.
     """
     while True: # Loop to allow for retries on network errors
-        print(f"\n{Colors.CYAN}Connecting to Kibana to fetch data for hit ID: {hit_id}...{Colors.ENDC}")
+        print(f"\n{Colors.CYAN}Connecting to Kibana to fetch data for hit ID: {hit_id} (Index: {index_pattern})...{Colors.ENDC}")
         
-        proxy_path = f"/api/console/proxy?path={KIBANA_INDEX_PATTERN}/_search&method=POST"
+        proxy_path = f"/api/console/proxy?path={index_pattern}/_search&method=POST"
         kibana_api_endpoint = KIBANA_URL.rstrip('/') + proxy_path
         
         headers = {
@@ -68,9 +67,7 @@ def fetch_kibana_data(hit_id):
                 "bool": {
                     "must": [
                         {"term": {"_id": hit_id}},
-                        # MODIFIED AGAIN: Making the query even more specific. It now requires
-                        # not only the event_type field to exist, but its value MUST be 'alert'.
-                        # This definitively filters out non-alert documents and configurations.
+                        # This query will ensure we only get actual Suricata alerts
                         {"term": {"suricata.eve.event_type": "alert"}}
                     ]
                 }
@@ -91,7 +88,7 @@ def fetch_kibana_data(hit_id):
             hits = es_response.get("hits", {}).get("hits", [])
             
             if not hits:
-                print(f"{Colors.RED}Error: No document found with ID '{hit_id}' that matches the required log format.{Colors.ENDC}")
+                print(f"{Colors.RED}Error: No document found with ID '{hit_id}' that matches the required log format in the selected index.{Colors.ENDC}")
                 print(f"{Colors.ORANGE}Check your hit ID and ensure it corresponds to a valid Suricata alert.{Colors.ENDC}")
                 return None
             
@@ -239,7 +236,23 @@ def main():
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
     kibana_hit_id = input(f"{Colors.ORANGE}Enter the Kibana Hit ID to pull data from: {Colors.ENDC}")
     
-    hit_data = fetch_kibana_data(kibana_hit_id)
+    # --- ADDED: Index Selection ---
+    print(f"\n{Colors.ORANGE}Select an Index Pattern to Search:{Colors.ENDC}")
+    index_options = {"1": "*", "2": "suricata*"}
+    print("   1: * (All indices - might be slower)")
+    print("   2: suricata* (Suricata indices - recommended)")
+    
+    selected_index = ""
+    while True:
+        choice = input(f"{Colors.BLUE}Enter your choice (default: 2): {Colors.ENDC}") or "2"
+        if choice in index_options:
+            selected_index = index_options[choice]
+            break
+        else:
+            print(f"{Colors.RED}Invalid selection. Please try again.{Colors.ENDC}")
+    # --- END: Index Selection ---
+    
+    hit_data = fetch_kibana_data(kibana_hit_id, selected_index)
     if not hit_data:
         sys.exit(1)
 
