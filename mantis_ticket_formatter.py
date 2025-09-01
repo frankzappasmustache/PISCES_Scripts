@@ -68,9 +68,10 @@ def fetch_kibana_data(hit_id):
                 "bool": {
                     "must": [
                         {"term": {"_id": hit_id}},
-                        # MODIFIED: Made the query more specific to find actual Suricata events,
-                        # not just any document that references suricata (like a policy file).
-                        {"exists": {"field": "suricata.eve.event_type"}}
+                        # MODIFIED AGAIN: Making the query even more specific. It now requires
+                        # not only the event_type field to exist, but its value MUST be 'alert'.
+                        # This definitively filters out non-alert documents and configurations.
+                        {"term": {"suricata.eve.event_type": "alert"}}
                     ]
                 }
             },
@@ -91,7 +92,7 @@ def fetch_kibana_data(hit_id):
             
             if not hits:
                 print(f"{Colors.RED}Error: No document found with ID '{hit_id}' that matches the required log format.{Colors.ENDC}")
-                print(f"{Colors.ORANGE}Check your hit ID and ensure it corresponds to a valid Suricata event.{Colors.ENDC}")
+                print(f"{Colors.ORANGE}Check your hit ID and ensure it corresponds to a valid Suricata alert.{Colors.ENDC}")
                 return None
             
             print(f"{Colors.GREEN}Successfully fetched data from Kibana.{Colors.ENDC}")
@@ -410,3 +411,4 @@ OS Version: {os_version}
 
 if __name__ == "__main__":
     main()
+
