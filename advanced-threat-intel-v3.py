@@ -8,7 +8,6 @@ import time
 from datetime import datetime
 
 import requests
-import brotli
 from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.panel import Panel
@@ -117,7 +116,8 @@ def scrape_talos(indicator, driver):
         if owner_div := soup.find('div', class_='whois-data'):
             if len(owner_info := owner_div.find_all('div')) > 1:
                 report_data.append(("Network Owner", owner_info[1].text.strip()))
-        return report_data
+        
+        return report_data if report_data else []
     except Exception as e:
         print_error(f"Failed to scrape Cisco Talos for {indicator}. Error: {e}")
         return None
@@ -154,7 +154,7 @@ def scrape_xforce(indicator, driver):
                     key, value = cells[0].text.strip(), cells[1].text.strip()
                     if "Location" in key: report_data.append(("Location", value))
                     elif "ASN" in key: report_data.append(("ASN", value))
-        return report_data
+        return report_data if report_data else []
     except Exception as e:
         print_error(f"Failed to scrape IBM X-Force for {indicator}. Error: {e}")
         return None
@@ -168,8 +168,12 @@ def query_virustotal(indicator):
     headers = {"x-apikey": API_KEYS["virustotal"]}
     try:
         response = requests.get(url, headers=headers)
+        if response.status_code == 404:
+            return [], [] # Not found
         response.raise_for_status()
         data = response.json().get("data", {}).get("attributes", {})
+        if not data:
+            return [], [] # Empty response
         stats = data.get("last_analysis_stats", {})
         malicious_vendors = stats.get("malicious", 0)
         main_data = [
@@ -199,8 +203,12 @@ def query_otx(indicator):
     headers = {"X-OTX-API-KEY": API_KEYS["otx"]}
     try:
         response = requests.get(url, headers=headers)
+        if response.status_code == 404:
+            return [] # Not found
         response.raise_for_status()
         data = response.json()
+        if not data:
+            return [] # Empty response
         related_pulses = data.get("pulse_info", {}).get("pulses", [])
         all_tags = {tag for pulse in related_pulses for tag in pulse.get("tags", [])}
         return [
@@ -222,6 +230,8 @@ def query_greynoise(indicator):
     headers = {"key": API_KEYS["greynoise"]}
     try:
         response = requests.get(url, headers=headers)
+        if response.status_code == 404:
+            return {} # Not found
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -240,6 +250,8 @@ def query_abuseipdb(indicator):
         response = requests.get(url, headers=headers, params=params)
         response.raise_for_status()
         data = response.json().get("data", {})
+        if not data or not data.get("ipAddress"):
+            return [] # Not found or empty data
         abuse_score = data.get("abuseConfidenceScore", 0)
         return [
             ("Abuse Confidence", f"[red]{abuse_score}%[/red]" if abuse_score > 0 else "[green]0%[/green]"),
@@ -263,6 +275,8 @@ def query_shodan(indicator):
     url = f"https://api.shodan.io/shodan/host/{indicator}?key={API_KEYS['shodan']}"
     try:
         response = requests.get(url)
+        if response.status_code == 404:
+            return [], [], [] # Not found
         response.raise_for_status()
         data = response.json()
         main_details = [
@@ -290,7 +304,7 @@ def query_urlscan(indicator):
         response.raise_for_status()
         results = response.json().get("results", [])
         if not results:
-            return [("Status", "No recent scans found")]
+            return [] # No scans found
         latest_scan = results[0]
         scan_id = latest_scan.get("task", {}).get("uuid")
         result_url = f"https://urlscan.io/api/v1/result/{scan_id}/"
@@ -311,6 +325,22 @@ def query_urlscan(indicator):
 
 # --- Formatting Functions ---
 
+def get_search_url(service_key, indicator):
+    """Generates a direct search URL for a given service and indicator."""
+    is_ip = is_ipv4(indicator)
+    urls = {
+        "virustotal": f"https://www.virustotal.com/gui/{'ip-address' if is_ip else 'domain'}/{indicator}",
+        "otx": f"https://otx.alienvault.com/indicator/{'ip' if is_ip else 'domain'}/{indicator}",
+        "greynoise": f"https://viz.greynoise.io/ip/{indicator}" if is_ip else None,
+        "abuseipdb": f"https://www.abuseipdb.com/check/{indicator}" if is_ip else None,
+        "shodan": f"https://www.shodan.io/host/{indicator}" if is_ip else None,
+        "urlscan": f"https://urlscan.io/search/#{indicator}",
+        "xforce": f"https://exchange.xforce.ibmcloud.com/search/{indicator}",
+        "talos": f"https://talosintelligence.com/reputation_center/lookup?search={indicator}"
+    }
+    return urls.get(service_key)
+
+
 def format_for_ticket(indicator, all_data):
     """Formats the collected data into a clean, copy-paste friendly string with rich markup."""
     output = [
@@ -318,15 +348,32 @@ def format_for_ticket(indicator, all_data):
         f"[bold]Threat Intelligence Report for: {indicator}[/bold]",
         "="*60
     ]
-    service_map = {
-        "virustotal": "VirusTotal", "xforce": "IBM X-Force", "otx": "AlienVault OTX",
-        "greynoise": "GreyNoise", "abuseipdb": "AbuseIPDB", "talos": "Cisco Talos",
-        "shodan": "Shodan", "urlscan": "URLScan"
-    }
-    for service_key, data in all_data.items():
-        if not data or (isinstance(data, tuple) and all(v is None for v in data)):
+    
+    service_order = [
+        ("virustotal", "VirusTotal"), ("abuseipdb", "AbuseIPDB"), ("otx", "AlienVault OTX"),
+        ("greynoise", "GreyNoise"), ("shodan", "Shodan"), ("urlscan", "URLScan"),
+        ("xforce", "IBM X-Force"), ("talos", "Cisco Talos")
+    ]
+
+    for service_key, service_name in service_order:
+        output.append(f"\n[bold underline]---------- {service_name} ----------[/bold underline]")
+        
+        search_url = get_search_url(service_key, indicator)
+        if search_url:
+            output.append(f"Search URL: {search_url}")
+
+        data = all_data.get(service_key)
+        
+        is_empty = (
+            data is None or
+            (isinstance(data, (list, tuple)) and not any(data)) or
+            (isinstance(data, dict) and not data)
+        )
+
+        if is_empty:
+            output.append("  [yellow]No record found for this indicator.[/yellow]")
             continue
-        output.append(f"\n[bold underline]---------- {service_map.get(service_key, service_key.title())} ----------[/bold underline]")
+
         if service_key == "virustotal":
             main_data, vendor_data = data
             if main_data:
@@ -336,6 +383,7 @@ def format_for_ticket(indicator, all_data):
                 output.append("\n  [bold]Vendor Analysis Breakdown:[/bold]")
                 for vendor, result, category in vendor_data:
                     output.append(f"    - {vendor:<25}: {result} ({category})")
+        
         elif service_key == "shodan":
             main_details, ports, vulns = data
             if main_details:
@@ -347,9 +395,11 @@ def format_for_ticket(indicator, all_data):
                 output.append("\n  [bold]Vulnerabilities:[/bold]")
                 for vuln in vulns:
                     output.append(f"    - [red]{vuln}[/red]")
+        
         elif isinstance(data, list):
             for key, value in data:
                 output.append(f"  [dim]{key:<25}:[/dim] {value}")
+        
         elif isinstance(data, dict) and service_key == "greynoise":
             if bsi := data.get("business_service_intelligence", {}):
                 if bsi.get("found"):
@@ -372,81 +422,85 @@ def format_for_ticket(indicator, all_data):
 def display_as_tables(indicator, all_data):
     """Displays the collected data in rich tables."""
     console.rule(f"[bold]Threat Intelligence Report for: {indicator}[/bold]")
-    vt_main, vt_vendor = all_data.get("virustotal", (None, None))
-    otx_data = all_data.get("otx")
-    greynoise_data = all_data.get("greynoise")
-    abuseipdb_data = all_data.get("abuseipdb")
-    shodan_main, shodan_ports, shodan_vulns = all_data.get("shodan", (None, None, None))
-    urlscan_data = all_data.get("urlscan")
+    
+    service_order = [
+        ("virustotal", "VirusTotal"), ("abuseipdb", "AbuseIPDB"), ("otx", "AlienVault OTX"),
+        ("greynoise", "GreyNoise"), ("shodan", "Shodan"), ("urlscan", "URLScan"),
+        ("xforce", "IBM X-Force"), ("talos", "Cisco Talos")
+    ]
 
-    if vt_main:
-        vt_table = Table(title="VirusTotal Intelligence", show_header=True, header_style="bold magenta", row_styles=["", "on #202020"])
-        vt_table.add_column("Attribute", style="dim"); vt_table.add_column("Value")
-        for key, val in vt_main: vt_table.add_row(key, val)
-        console.print(vt_table)
-        if vt_vendor:
-            vendor_table = Table(title="Vendor Analysis Breakdown", show_header=True, header_style="bold blue", row_styles=["", "on #202020"])
-            vendor_table.add_column("Vendor Name"); vendor_table.add_column("Result"); vendor_table.add_column("Category")
-            for vendor, result, category in vt_vendor: vendor_table.add_row(vendor, result, category)
-            console.print(vendor_table)
+    for service_key, service_name in service_order:
+        data = all_data.get(service_key)
+        is_empty = (
+            data is None or
+            (isinstance(data, (list, tuple)) and not any(data)) or
+            (isinstance(data, dict) and not data)
+        )
 
-    if otx_data:
-        otx_table = Table(title="AlienVault OTX", show_header=True, header_style="bold green", row_styles=["", "on #202020"])
-        otx_table.add_column("Attribute", style="dim"); otx_table.add_column("Value")
-        for key, val in otx_data: otx_table.add_row(key, val)
-        console.print(otx_table)
+        search_url = get_search_url(service_key, indicator)
+        title = f"[link={search_url}]{service_name}[/link]" if search_url else service_name
 
-    if greynoise_data:
-        console.print(Panel("[bold yellow]GreyNoise Intelligence[/bold yellow]"))
-        if bsi := greynoise_data.get("business_service_intelligence", {}):
-            if bsi.get("found"):
-                bsi_table = Table(title="Business Service Intelligence", show_header=True, header_style="bold cyan", row_styles=["", "on #202020"])
-                bsi_table.add_column("Attribute", style="dim"); bsi_table.add_column("Value")
-                for key, val in bsi.items():
-                    if key != "found": bsi_table.add_row(key.replace('_', ' ').title(), str(val))
-                console.print(bsi_table)
-        if isi := greynoise_data.get("internet_scanner_intelligence", {}):
-            if isi.get("found"):
-                isi_table = Table(title="Internet Scanner Intelligence", show_header=True, header_style="bold green", row_styles=["", "on #202020"])
-                isi_table.add_column("Attribute", style="dim"); isi_table.add_column("Value")
-                metadata = isi.pop("metadata", {}); tags = isi.pop("tags", [])
-                for key, val in isi.items():
-                    if key not in ["found", "raw_data"]: isi_table.add_row(key.replace('_', ' ').title(), str(val))
-                for key, val in metadata.items(): isi_table.add_row(key.replace('_', ' ').title(), str(val))
-                if tags: isi_table.add_row("Tags", ", ".join(t['name'] for t in tags))
-                console.print(isi_table)
+        if is_empty:
+            console.print(Panel("[yellow]No record found for this indicator.[/yellow]", title=title, border_style="dim"))
+            continue
 
-    if abuseipdb_data:
-        abuse_table = Table(title="AbuseIPDB", show_header=True, header_style="bold red", row_styles=["", "on #202020"])
-        abuse_table.add_column("Attribute", style="dim"); abuse_table.add_column("Value")
-        for key, val in abuseipdb_data: abuse_table.add_row(key, val)
-        console.print(abuse_table)
+        if service_key == "virustotal":
+            vt_main, vt_vendor = data
+            vt_table = Table(title=title, show_header=True, header_style="bold magenta", row_styles=["", "on #202020"])
+            vt_table.add_column("Attribute", style="dim"); vt_table.add_column("Value")
+            for key, val in vt_main: vt_table.add_row(key, val)
+            console.print(vt_table)
+            if vt_vendor:
+                vendor_table = Table(title="Vendor Analysis Breakdown", show_header=True, header_style="bold blue", row_styles=["", "on #202020"])
+                vendor_table.add_column("Vendor Name"); vendor_table.add_column("Result"); vendor_table.add_column("Category")
+                for vendor, result, category in vt_vendor: vendor_table.add_row(vendor, result, category)
+                console.print(vendor_table)
+        
+        elif service_key == "otx" or service_key == "abuseipdb" or service_key == "urlscan" or service_key == "xforce" or service_key == "talos":
+            table = Table(title=title, show_header=True, header_style="bold green", row_styles=["", "on #202020"])
+            table.add_column("Attribute", style="dim"); table.add_column("Value")
+            for key, val in data: table.add_row(key, str(val))
+            console.print(table)
+        
+        elif service_key == "greynoise":
+             console.print(Panel(f"[bold yellow]{title}[/bold yellow]"))
+             if bsi := data.get("business_service_intelligence", {}):
+                 if bsi.get("found"):
+                     bsi_table = Table(title="Business Service Intelligence", show_header=True, header_style="bold cyan", row_styles=["", "on #202020"])
+                     bsi_table.add_column("Attribute", style="dim"); bsi_table.add_column("Value")
+                     for key, val in bsi.items():
+                         if key != "found": bsi_table.add_row(key.replace('_', ' ').title(), str(val))
+                     console.print(bsi_table)
+             if isi := data.get("internet_scanner_intelligence", {}):
+                 if isi.get("found"):
+                     isi_table = Table(title="Internet Scanner Intelligence", show_header=True, header_style="bold green", row_styles=["", "on #202020"])
+                     isi_table.add_column("Attribute", style="dim"); isi_table.add_column("Value")
+                     metadata = isi.pop("metadata", {}); tags = isi.pop("tags", [])
+                     for key, val in isi.items():
+                         if key not in ["found", "raw_data"]: isi_table.add_row(key.replace('_', ' ').title(), str(val))
+                     for key, val in metadata.items(): isi_table.add_row(key.replace('_', ' ').title(), str(val))
+                     if tags: isi_table.add_row("Tags", ", ".join(t['name'] for t in tags))
+                     console.print(isi_table)
 
-    if shodan_main:
-        shodan_table = Table(title="Shodan", show_header=True, header_style="bold purple", row_styles=["", "on #202020"])
-        shodan_table.add_column("Attribute", style="dim"); shodan_table.add_column("Value")
-        for key, val in shodan_main: shodan_table.add_row(key, val)
-        shodan_table.add_row("Open Ports", ", ".join(map(str, shodan_ports)))
-        console.print(shodan_table)
-        if shodan_vulns:
-            vuln_table = Table(title="Shodan Vulnerabilities", show_header=True, header_style="bold red", row_styles=["", "on #202020"])
-            vuln_table.add_column("CVE")
-            for vuln in shodan_vulns:
-                vuln_table.add_row(f"[red]{vuln}[/red]")
-            console.print(vuln_table)
-            
-    if urlscan_data:
-        urlscan_table = Table(title="URLScan", show_header=True, header_style="bold blue", row_styles=["", "on #202020"])
-        urlscan_table.add_column("Attribute", style="dim"); urlscan_table.add_column("Value")
-        for key, val in urlscan_data: urlscan_table.add_row(key, val)
-        console.print(urlscan_table)
-
+        elif service_key == "shodan":
+             shodan_main, shodan_ports, shodan_vulns = data
+             shodan_table = Table(title=title, show_header=True, header_style="bold purple", row_styles=["", "on #202020"])
+             shodan_table.add_column("Attribute", style="dim"); shodan_table.add_column("Value")
+             for key, val in shodan_main: shodan_table.add_row(key, val)
+             shodan_table.add_row("Open Ports", ", ".join(map(str, shodan_ports)))
+             console.print(shodan_table)
+             if shodan_vulns:
+                 vuln_table = Table(title="Shodan Vulnerabilities", show_header=True, header_style="bold red", row_styles=["", "on #202020"])
+                 vuln_table.add_column("CVE")
+                 for vuln in shodan_vulns:
+                     vuln_table.add_row(f"[red]{vuln}[/red]")
+                 console.print(vuln_table)
 
 def main():
     """Main function to parse arguments and run the queries."""
     parser = argparse.ArgumentParser(
         description="A powerful threat intelligence tool to query multiple services via API and web scraping.",
-        epilog="Example: python advanced-threat-intel.py --format ticket 8.8.8.8 example.com"
+        epilog="Example: python advanced-threat-intel-v3.py --format ticket 8.8.8.8 example.com"
     )
     parser.add_argument("indicators", nargs='+', help="One or more IP addresses or domains to look up.")
     parser.add_argument("--format", choices=['table', 'ticket'], default='table', help="Output format (default: table).")

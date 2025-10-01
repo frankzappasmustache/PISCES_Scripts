@@ -10,7 +10,6 @@ from tkinter import filedialog
 import requests
 import math
 import re
-import ipaddress
 
 # --- ANSI COLOR CODES (Vim Airline Inspired) ---
 class Colors:
@@ -185,17 +184,6 @@ def get_user_selection(prompt, options, default=None):
         if choice in options:
             return choice
         print(f"{Colors.RED}Invalid selection. Please try again.{Colors.ENDC}")
-
-def is_public_ip(ip_string):
-    """Checks if a given IP address string is a public IP (is_global)."""
-    if not ip_string:
-        return False
-    try:
-        ip_obj = ipaddress.ip_address(ip_string)
-        return ip_obj.is_global
-    except ValueError:
-        # The string was not a valid IP address
-        return False
 
 def run_threat_intel_script(ip_addresses):
     """Runs the advanced threat intel script and returns its formatted output."""
@@ -416,12 +404,8 @@ def main():
         suggested_ips = []
         src_ip = hit_data.get('source', {}).get('ip')
         dst_ip = hit_data.get('destination', {}).get('ip')
-
-        if src_ip and is_public_ip(src_ip):
-            suggested_ips.append(src_ip)
-        if dst_ip and dst_ip != src_ip and is_public_ip(dst_ip):
-            suggested_ips.append(dst_ip)
-            
+        if src_ip: suggested_ips.append(src_ip)
+        if dst_ip and dst_ip != src_ip: suggested_ips.append(dst_ip)
         suggested_input = " ".join(suggested_ips)
 
         prompt_message = f"{Colors.BLUE}Enter IPs/domains to check (e.g., 8.8.8.8 badsite.com)"
@@ -437,7 +421,7 @@ def main():
             intel_output = run_threat_intel_script(targets_to_check)
             additional_info += f"== Threat Intelligence Lookup ==\n{intel_output}"
         else:
-            print(f"{Colors.ORANGE}No public IPs or domains provided to check. Skipping.{Colors.ENDC}")
+            print(f"{Colors.ORANGE}No IPs or domains provided to check. Skipping.{Colors.ENDC}")
 
     attachments = []
     attach_files_choice = input(f"\n{Colors.ORANGE}Attach any files (e.g., screenshots)? (y/n): {Colors.ENDC}").lower()

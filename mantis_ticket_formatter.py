@@ -45,16 +45,15 @@ def check_env_variables():
         sys.exit(1)
     return True
 
-def fetch_kibana_data(hit_id, index_pattern):
+def fetch_kibana_data(search_id, index_pattern, search_type):
     """
-    Fetches a document using the Kibana Console Proxy API. Includes a retry
-    mechanism for recoverable network errors.
+    Fetches a document using Kibana's internal search API, searching by either
+    document ID or flow ID.
     """
     while True: # Loop to allow for retries on network errors
-        print(f"\n{Colors.CYAN}Connecting to Kibana to fetch data for hit ID: {hit_id} (Index: {index_pattern})...{Colors.ENDC}")
+        print(f"\n{Colors.CYAN}Connecting to Kibana to fetch data for {search_type}: {search_id} (Index: {index_pattern})...{Colors.ENDC}")
         
-        proxy_path = f"/api/console/proxy?path={index_pattern}/_search&method=POST"
-        kibana_api_endpoint = KIBANA_URL.rstrip('/') + proxy_path
+        kibana_api_endpoint = f"{KIBANA_URL.rstrip('/')}/internal/search/es"
         
         headers = {
             "Content-Type": "application/json",
@@ -62,34 +61,39 @@ def fetch_kibana_data(hit_id, index_pattern):
             "Cookie": KIBANA_COOKIE
         }
 
+        # Build query based on search type
+        if search_type == "Document ID":
+            search_clause = { "ids": { "values": [search_id] } }
+        else: # Flow ID
+            search_clause = { "term": { "suricata.eve.flow_id": search_id } }
+
         es_query = {
             "query": {
                 "bool": {
                     "must": [
-                        {"term": {"_id": hit_id}},
-                        # This query will ensure we only get actual Suricata alerts
-                        {"term": {"suricata.eve.event_type": "alert"}}
+                        search_clause,
+                        { "term": { "suricata.eve.event_type": "alert" } }
                     ]
                 }
             },
             "size": 1
         }
+        
+        payload = {
+            "params": { "index": index_pattern, "body": es_query }
+        }
 
         try:
-            response = requests.post(kibana_api_endpoint, headers=headers, json=es_query, timeout=90)
+            response = requests.post(kibana_api_endpoint, headers=headers, json=payload, timeout=90)
             response.raise_for_status()
             data = response.json()
             
-            if isinstance(data, dict) and "responses" in data:
-                es_response = data["responses"][0]
-            else:
-                es_response = data
-
-            hits = es_response.get("hits", {}).get("hits", [])
+            hits = data.get("rawResponse", {}).get("hits", {}).get("hits", [])
             
             if not hits:
-                print(f"{Colors.RED}Error: No document found with ID '{hit_id}' that matches the required log format in the selected index.{Colors.ENDC}")
-                print(f"{Colors.ORANGE}Check your hit ID and ensure it corresponds to a valid Suricata alert.{Colors.ENDC}")
+                print(f"{Colors.RED}Error: No document found for {search_type} '{search_id}' that matches the required log format in the selected index.{Colors.ENDC}")
+                if search_type == "Flow ID":
+                    print(f"{Colors.ORANGE}Note: Not all events have a Flow ID. You may want to try searching by Document ID instead.{Colors.ENDC}")
                 return None
             
             print(f"{Colors.GREEN}Successfully fetched data from Kibana.{Colors.ENDC}")
@@ -99,7 +103,7 @@ def fetch_kibana_data(hit_id, index_pattern):
             print(f"{Colors.RED}A network error occurred while contacting Kibana: {e}{Colors.ENDC}")
             retry_choice = input(f"{Colors.ORANGE}Would you like to try again? (y/n): {Colors.ENDC}").lower()
             if retry_choice != 'y':
-                return None # Exit if user says no
+                return None
 
         except requests.exceptions.HTTPError as e:
             print(f"{Colors.RED}HTTP Error fetching data from Kibana: {e.response.status_code} {e.response.reason}{Colors.ENDC}")
@@ -232,13 +236,27 @@ def main():
     """Main function to gather information and create a formatted issue file."""
     check_env_variables()
     print(f"{Colors.PURPLE}{Colors.BOLD}--- Issue Formatter ---{Colors.ENDC}")
-    # Diagnostic print to ensure the correct version is running
-    print(f"{Colors.GREEN}--- Running Script Version: 4.3 (with IP detection fix) ---{Colors.ENDC}")
-
 
     summary = input(f"\n{Colors.ORANGE}Enter Issue Summary (Title): {Colors.ENDC}")
-    kibana_hit_id = input(f"{Colors.ORANGE}Enter the Kibana Hit ID to pull data from: {Colors.ENDC}")
+
+    # --- Search Type Selection ---
+    print(f"\n{Colors.ORANGE}Select a search method:{Colors.ENDC}")
+    search_options = {"1": "Document ID", "2": "Flow ID"}
+    print("   1: Search by Document ID")
+    print("   2: Search by Suricata Flow ID")
     
+    selected_search_type = ""
+    while True:
+        choice = input(f"{Colors.BLUE}Enter your choice (default: 1): {Colors.ENDC}") or "1"
+        if choice in search_options:
+            selected_search_type = search_options[choice]
+            break
+        else:
+            print(f"{Colors.RED}Invalid selection. Please try again.{Colors.ENDC}")
+    
+    id_to_search = input(f"{Colors.ORANGE}Enter the {selected_search_type} to pull data from: {Colors.ENDC}")
+    # --- END: Search Type Selection ---
+
     # --- Index Selection ---
     print(f"\n{Colors.ORANGE}Select an Index Pattern to Search:{Colors.ENDC}")
     index_options = {"1": "*", "2": "suricata*"}
@@ -255,7 +273,7 @@ def main():
             print(f"{Colors.RED}Invalid selection. Please try again.{Colors.ENDC}")
     # --- END: Index Selection ---
     
-    hit_data = fetch_kibana_data(kibana_hit_id, selected_index)
+    hit_data = fetch_kibana_data(id_to_search, selected_index, selected_search_type)
     if not hit_data:
         sys.exit(1)
 
@@ -352,8 +370,7 @@ def main():
     if run_intel_choice == 'y':
         suggested_ips = []
         
-        # --- FIXED: More robust IP address detection ---
-        # First, try the standard ECS fields
+        # More robust IP address detection
         src_ip = hit_data.get('source', {}).get('ip')
         dst_ip = hit_data.get('destination', {}).get('ip')
 
@@ -362,9 +379,8 @@ def main():
             suricata_eve = hit_data.get('suricata', {}).get('eve', {})
             if suricata_eve:
                 src_ip = src_ip or suricata_eve.get('src_ip')
-                dst_ip = dst_ip or suricata_eve.get('dest_ip') # Note: Suricata often uses 'dest_ip'
-        # --- END FIX ---
-
+                dst_ip = dst_ip or suricata_eve.get('dest_ip')
+        
         if src_ip and is_public_ip(src_ip):
             suggested_ips.append(src_ip)
         if dst_ip and dst_ip != src_ip and is_public_ip(dst_ip):
