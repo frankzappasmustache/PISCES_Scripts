@@ -92,72 +92,72 @@ def handle_api_error(e, service_name, indicator):
 
 # --- Data Gathering Functions ---
 
-def scrape_talos(indicator, driver):
-    """Scrapes the Cisco Talos Intelligence page by mimicking the user's search workflow."""
-    console.print(f"[cyan]Querying Cisco Talos for {indicator}...[/cyan]")
-    report_data = []
-    try:
-        driver.get("https://talosintelligence.com/")
-        search_box = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.ID, "new-search-form-input"))
-        )
-        search_box.send_keys(indicator)
-        search_box.send_keys(Keys.RETURN)
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "reputation-details-container"))
-        )
-        soup = BeautifulSoup(driver.page_source, 'lxml')
-        
-        if web_rep_element := soup.find('span', class_='web-rep-label'):
-            report_data.append(("Web Reputation", web_rep_element.text.strip()))
-        if email_rep_element := soup.find('div', class_='email-rep-details'):
-            if rep_label := email_rep_element.find('div', class_='rep-label'):
-                report_data.append(("Email Reputation", rep_label.text.strip()))
-        if owner_div := soup.find('div', class_='whois-data'):
-            if len(owner_info := owner_div.find_all('div')) > 1:
-                report_data.append(("Network Owner", owner_info[1].text.strip()))
-        
-        return report_data if report_data else []
-    except Exception as e:
-        print_error(f"Failed to scrape Cisco Talos for {indicator}. Error: {e}")
-        return None
+# def scrape_talos(indicator, driver):
+#     """Scrapes the Cisco Talos Intelligence page by mimicking the user's search workflow."""
+#     console.print(f"[cyan]Querying Cisco Talos for {indicator}...[/cyan]")
+#     report_data = []
+#     try:
+#         driver.get("https://talosintelligence.com/")
+#         search_box = WebDriverWait(driver, 20).until(
+#             EC.presence_of_element_located((By.ID, "new-search-form-input"))
+#         )
+#         search_box.send_keys(indicator)
+#         search_box.send_keys(Keys.RETURN)
+#         WebDriverWait(driver, 20).until(
+#             EC.presence_of_element_located((By.CLASS_NAME, "reputation-details-container"))
+#         )
+#         soup = BeautifulSoup(driver.page_source, 'lxml')
+#         
+#         if web_rep_element := soup.find('span', class_='web-rep-label'):
+#             report_data.append(("Web Reputation", web_rep_element.text.strip()))
+#         if email_rep_element := soup.find('div', class_='email-rep-details'):
+#             if rep_label := email_rep_element.find('div', class_='rep-label'):
+#                 report_data.append(("Email Reputation", rep_label.text.strip()))
+#         if owner_div := soup.find('div', class_='whois-data'):
+#             if len(owner_info := owner_div.find_all('div')) > 1:
+#                 report_data.append(("Network Owner", owner_info[1].text.strip()))
+#         
+#         return report_data if report_data else []
+#     except Exception as e:
+#         print_error(f"Failed to scrape Cisco Talos for {indicator}. Error: {e}")
+#         return None
 
-def scrape_xforce(indicator, driver):
-    """Scrapes the IBM X-Force Exchange page by mimicking the user's search workflow."""
-    console.print(f"[cyan]Querying IBM X-Force for {indicator}...[/cyan]")
-    report_data = []
-    try:
-        driver.get("https://exchange.xforce.ibmcloud.com/")
-        try:
-            cookie_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler")))
-            cookie_button.click()
-            time.sleep(1)
-        except TimeoutException:
-            pass  # No cookie banner
-        search_box = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH, "//input[contains(@placeholder, 'Search by')]"))
-        )
-        search_box.send_keys(indicator)
-        search_box.send_keys(Keys.RETURN)
-        WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, "details-table")))
-        soup = BeautifulSoup(driver.page_source, 'lxml')
-        if risk_element := soup.find('span', {'data-test-id': 'risk-score-value'}):
-            report_data.append(("Risk Score", risk_element.text.strip()))
-        if cat_heading := soup.find('h5', string='Categorization'):
-            if cat_container := cat_heading.find_parent('div').find_next_sibling('div'):
-                categories = [a.text.strip() for a in cat_container.find_all('a')]
-                report_data.append(("Categorization", ", ".join(categories)))
-        if details_table := soup.find('table', class_='details-table'):
-            for row in details_table.find_all('tr'):
-                cells = row.find_all('td')
-                if len(cells) == 2:
-                    key, value = cells[0].text.strip(), cells[1].text.strip()
-                    if "Location" in key: report_data.append(("Location", value))
-                    elif "ASN" in key: report_data.append(("ASN", value))
-        return report_data if report_data else []
-    except Exception as e:
-        print_error(f"Failed to scrape IBM X-Force for {indicator}. Error: {e}")
-        return None
+# def scrape_xforce(indicator, driver):
+#     """Scrapes the IBM X-Force Exchange page by mimicking the user's search workflow."""
+#     console.print(f"[cyan]Querying IBM X-Force for {indicator}...[/cyan]")
+#     report_data = []
+#     try:
+#         driver.get("https://exchange.xforce.ibmcloud.com/")
+#         try:
+#             cookie_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler")))
+#             cookie_button.click()
+#             time.sleep(1)
+#         except TimeoutException:
+#             pass  # No cookie banner
+#         search_box = WebDriverWait(driver, 20).until(
+#             EC.presence_of_element_located((By.XPATH, "//input[contains(@placeholder, 'Search by')]"))
+#         )
+#         search_box.send_keys(indicator)
+#         search_box.send_keys(Keys.RETURN)
+#         WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, "details-table")))
+#         soup = BeautifulSoup(driver.page_source, 'lxml')
+#         if risk_element := soup.find('span', {'data-test-id': 'risk-score-value'}):
+#             report_data.append(("Risk Score", risk_element.text.strip()))
+#         if cat_heading := soup.find('h5', string='Categorization'):
+#             if cat_container := cat_heading.find_parent('div').find_next_sibling('div'):
+#                 categories = [a.text.strip() for a in cat_container.find_all('a')]
+#                 report_data.append(("Categorization", ", ".join(categories)))
+#         if details_table := soup.find('table', class_='details-table'):
+#             for row in details_table.find_all('tr'):
+#                 cells = row.find_all('td')
+#                 if len(cells) == 2:
+#                     key, value = cells[0].text.strip(), cells[1].text.strip()
+#                     if "Location" in key: report_data.append(("Location", value))
+#                     elif "ASN" in key: report_data.append(("ASN", value))
+#         return report_data if report_data else []
+#     except Exception as e:
+#         print_error(f"Failed to scrape IBM X-Force for {indicator}. Error: {e}")
+#         return None
 
 def query_virustotal(indicator):
     """Queries the VirusTotal API and returns main data and vendor data."""
@@ -335,8 +335,8 @@ def get_search_url(service_key, indicator):
         "abuseipdb": f"https://www.abuseipdb.com/check/{indicator}" if is_ip else None,
         "shodan": f"https://www.shodan.io/host/{indicator}" if is_ip else None,
         "urlscan": f"https://urlscan.io/search/#{indicator}",
-        "xforce": f"https://exchange.xforce.ibmcloud.com/search/{indicator}",
-        "talos": f"https://talosintelligence.com/reputation_center/lookup?search={indicator}"
+        # "xforce": f"https://exchange.xforce.ibmcloud.com/search/{indicator}",
+        # "talos": f"https://talosintelligence.com/reputation_center/lookup?search={indicator}"
     }
     return urls.get(service_key)
 
@@ -352,7 +352,8 @@ def format_for_ticket(indicator, all_data):
     service_order = [
         ("virustotal", "VirusTotal"), ("abuseipdb", "AbuseIPDB"), ("otx", "AlienVault OTX"),
         ("greynoise", "GreyNoise"), ("shodan", "Shodan"), ("urlscan", "URLScan"),
-        ("xforce", "IBM X-Force"), ("talos", "Cisco Talos")
+        # ("xforce", "IBM X-Force"), 
+        # ("talos", "Cisco Talos")
     ]
 
     for service_key, service_name in service_order:
@@ -426,7 +427,8 @@ def display_as_tables(indicator, all_data):
     service_order = [
         ("virustotal", "VirusTotal"), ("abuseipdb", "AbuseIPDB"), ("otx", "AlienVault OTX"),
         ("greynoise", "GreyNoise"), ("shodan", "Shodan"), ("urlscan", "URLScan"),
-        ("xforce", "IBM X-Force"), ("talos", "Cisco Talos")
+        # ("xforce", "IBM X-Force"), 
+        # ("talos", "Cisco Talos")
     ]
 
     for service_key, service_name in service_order:
@@ -456,45 +458,45 @@ def display_as_tables(indicator, all_data):
                 for vendor, result, category in vt_vendor: vendor_table.add_row(vendor, result, category)
                 console.print(vendor_table)
         
-        elif service_key == "otx" or service_key == "abuseipdb" or service_key == "urlscan" or service_key == "xforce" or service_key == "talos":
+        elif service_key == "otx" or service_key == "abuseipdb" or service_key == "urlscan": # Removed xforce and talos
             table = Table(title=title, show_header=True, header_style="bold green", row_styles=["", "on #202020"])
             table.add_column("Attribute", style="dim"); table.add_column("Value")
             for key, val in data: table.add_row(key, str(val))
             console.print(table)
         
         elif service_key == "greynoise":
-             console.print(Panel(f"[bold yellow]{title}[/bold yellow]"))
-             if bsi := data.get("business_service_intelligence", {}):
-                 if bsi.get("found"):
-                     bsi_table = Table(title="Business Service Intelligence", show_header=True, header_style="bold cyan", row_styles=["", "on #202020"])
-                     bsi_table.add_column("Attribute", style="dim"); bsi_table.add_column("Value")
-                     for key, val in bsi.items():
-                         if key != "found": bsi_table.add_row(key.replace('_', ' ').title(), str(val))
-                     console.print(bsi_table)
-             if isi := data.get("internet_scanner_intelligence", {}):
-                 if isi.get("found"):
-                     isi_table = Table(title="Internet Scanner Intelligence", show_header=True, header_style="bold green", row_styles=["", "on #202020"])
-                     isi_table.add_column("Attribute", style="dim"); isi_table.add_column("Value")
-                     metadata = isi.pop("metadata", {}); tags = isi.pop("tags", [])
-                     for key, val in isi.items():
-                         if key not in ["found", "raw_data"]: isi_table.add_row(key.replace('_', ' ').title(), str(val))
-                     for key, val in metadata.items(): isi_table.add_row(key.replace('_', ' ').title(), str(val))
-                     if tags: isi_table.add_row("Tags", ", ".join(t['name'] for t in tags))
-                     console.print(isi_table)
+            console.print(Panel(f"[bold yellow]{title}[/bold yellow]"))
+            if bsi := data.get("business_service_intelligence", {}):
+                if bsi.get("found"):
+                    bsi_table = Table(title="Business Service Intelligence", show_header=True, header_style="bold cyan", row_styles=["", "on #202020"])
+                    bsi_table.add_column("Attribute", style="dim"); bsi_table.add_column("Value")
+                    for key, val in bsi.items():
+                        if key != "found": bsi_table.add_row(key.replace('_', ' ').title(), str(val))
+                    console.print(bsi_table)
+            if isi := data.get("internet_scanner_intelligence", {}):
+                if isi.get("found"):
+                    isi_table = Table(title="Internet Scanner Intelligence", show_header=True, header_style="bold green", row_styles=["", "on #202020"])
+                    isi_table.add_column("Attribute", style="dim"); isi_table.add_column("Value")
+                    metadata = isi.pop("metadata", {}); tags = isi.pop("tags", [])
+                    for key, val in isi.items():
+                        if key not in ["found", "raw_data"]: isi_table.add_row(key.replace('_', ' ').title(), str(val))
+                    for key, val in metadata.items(): isi_table.add_row(key.replace('_', ' ').title(), str(val))
+                    if tags: isi_table.add_row("Tags", ", ".join(t['name'] for t in tags))
+                    console.print(isi_table)
 
         elif service_key == "shodan":
-             shodan_main, shodan_ports, shodan_vulns = data
-             shodan_table = Table(title=title, show_header=True, header_style="bold purple", row_styles=["", "on #202020"])
-             shodan_table.add_column("Attribute", style="dim"); shodan_table.add_column("Value")
-             for key, val in shodan_main: shodan_table.add_row(key, val)
-             shodan_table.add_row("Open Ports", ", ".join(map(str, shodan_ports)))
-             console.print(shodan_table)
-             if shodan_vulns:
-                 vuln_table = Table(title="Shodan Vulnerabilities", show_header=True, header_style="bold red", row_styles=["", "on #202020"])
-                 vuln_table.add_column("CVE")
-                 for vuln in shodan_vulns:
-                     vuln_table.add_row(f"[red]{vuln}[/red]")
-                 console.print(vuln_table)
+            shodan_main, shodan_ports, shodan_vulns = data
+            shodan_table = Table(title=title, show_header=True, header_style="bold purple", row_styles=["", "on #202020"])
+            shodan_table.add_column("Attribute", style="dim"); shodan_table.add_column("Value")
+            for key, val in shodan_main: shodan_table.add_row(key, val)
+            shodan_table.add_row("Open Ports", ", ".join(map(str, shodan_ports)))
+            console.print(shodan_table)
+            if shodan_vulns:
+                vuln_table = Table(title="Shodan Vulnerabilities", show_header=True, header_style="bold red", row_styles=["", "on #202020"])
+                vuln_table.add_column("CVE")
+                for vuln in shodan_vulns:
+                    vuln_table.add_row(f"[red]{vuln}[/red]")
+                console.print(vuln_table)
 
 def main():
     """Main function to parse arguments and run the queries."""
@@ -556,4 +558,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

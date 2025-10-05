@@ -53,11 +53,8 @@ def fetch_kibana_data(search_id, index_pattern, search_type):
     while True: # Loop to allow for retries on network errors
         print(f"\n{Colors.CYAN}Connecting to Kibana to fetch data for {search_type}: {search_id} (Index: {index_pattern})...{Colors.ENDC}")
 
-        # --- START OF MODIFIED SECTION ---
-        # Construct the URL using the Kibana Console Proxy path
         proxy_path = f"/api/console/proxy?path={index_pattern}/_search&method=POST"
         kibana_api_endpoint = KIBANA_URL.rstrip('/') + proxy_path
-        # --- END OF MODIFIED SECTION ---
 
         headers = {
             "Content-Type": "application/json",
@@ -70,34 +67,24 @@ def fetch_kibana_data(search_id, index_pattern, search_type):
             headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"
 
         if search_type == "Document ID":
-            search_clause = { "ids": { "values": [search_id] } }
+            search_clause = {"term": {"_id": search_id}}
         else: # Flow ID
-            search_clause = { "term": { "suricata.eve.flow_id": search_id } }
+            search_clause = {"term": {"suricata.eve.flow_id": search_id}}
 
         es_query = {
-            "query": {
-                "bool": {
-                    "must": [
-                        search_clause,
-                        {"term": {"suricata.eve.event_type": "alert"}}
-                    ]
-                }
-            },
+            "query": search_clause,
             "size": 1
         }
         
         try:
-            # --- START OF MODIFIED SECTION ---
-            # Send the es_query directly, not wrapped in a 'params' payload
             response = requests.post(kibana_api_endpoint, headers=headers, json=es_query, timeout=90)
-            # --- END OF MODIFIED SECTION ---
             response.raise_for_status()
             data = response.json()
 
             hits = data.get("hits", {}).get("hits", [])
 
             if not hits:
-                print(f"{Colors.RED}Error: No document found for {search_type} '{search_id}' that matches the required log format.{Colors.ENDC}")
+                print(f"{Colors.RED}Error: No document found for {search_type} '{search_id}' in the specified index.{Colors.ENDC}")
                 return None
 
             print(f"{Colors.GREEN}Successfully fetched data from Kibana.{Colors.ENDC}")
@@ -105,33 +92,24 @@ def fetch_kibana_data(search_id, index_pattern, search_type):
 
         except requests.exceptions.RequestException as e:
             print(f"{Colors.RED}A network error occurred while contacting Kibana: {e}{Colors.ENDC}")
+            
             while True: # Loop for user choice
-                if emulate_browser:
-                    print(f"{Colors.ORANGE}Browser Emulation Mode also failed. What would you like to do?{Colors.ENDC}")
-                    print("   1: Retry in Browser Emulation Mode")
-                    print("   2: Abort")
-                    choice = input(f"{Colors.BLUE}Enter your choice (default: 2): {Colors.ENDC}") or "2"
-                    if choice == '1':
-                        break
-                    elif choice == '2':
-                        return None
-                    else:
-                        print(f"{Colors.RED}Invalid choice. Please try again.{Colors.ENDC}")
-                else: # Normal mode failed
-                    print(f"{Colors.ORANGE}What would you like to do?{Colors.ENDC}")
-                    print("   1: Retry in Normal Mode")
-                    print("   2: Try in Browser Emulation Mode")
-                    print("   3: Abort")
-                    choice = input(f"{Colors.BLUE}Enter your choice (default: 3): {Colors.ENDC}") or "3"
-                    if choice == '1':
-                        break
-                    elif choice == '2':
-                        emulate_browser = True
-                        break
-                    elif choice == '3':
-                        return None
-                    else:
-                        print(f"{Colors.RED}Invalid choice. Please try again.{Colors.ENDC}")
+                print(f"{Colors.ORANGE}What would you like to do?{Colors.ENDC}")
+                print("   1: Retry in Normal Mode")
+                print("   2: Retry in Browser Emulation Mode")
+                print("   3: Abort")
+                choice = input(f"{Colors.BLUE}Enter your choice (default: 3): {Colors.ENDC}") or "3"
+
+                if choice == '1':
+                    emulate_browser = False
+                    break 
+                elif choice == '2':
+                    emulate_browser = True
+                    break
+                elif choice == '3':
+                    return None
+                else:
+                    print(f"{Colors.RED}Invalid choice. Please try again.{Colors.ENDC}")
         
         except requests.exceptions.HTTPError as e:
             print(f"{Colors.RED}HTTP Error fetching data from Kibana: {e.response.status_code} {e.response.reason}{Colors.ENDC}")
@@ -287,16 +265,26 @@ def main():
 
     # --- Index Selection ---
     print(f"\n{Colors.ORANGE}Select an Index Pattern to Search:{Colors.ENDC}")
-    index_options = {"1": "*", "2": "suricata*"}
+    index_options = {"1": "*", "2": "suricata*", "3": "Specify custom index..."}
     print("   1: * (All indices - might be slower)")
     print("   2: suricata* (Suricata indices - recommended)")
+    print("   3: Specify custom index (e.g., suricata-2025.10.04)")
 
     selected_index = ""
     while True:
         choice = input(f"{Colors.BLUE}Enter your choice (default: 2): {Colors.ENDC}") or "2"
         if choice in index_options:
-            selected_index = index_options[choice]
-            break
+            if choice == '3':
+                custom_index = input(f"{Colors.ORANGE}Enter the custom index pattern: {Colors.ENDC}")
+                if custom_index.strip():
+                    selected_index = custom_index.strip()
+                    break
+                else:
+                    print(f"{Colors.RED}Custom index cannot be empty. Please choose from the menu again.{Colors.ENDC}")
+                    continue
+            else:
+                selected_index = index_options[choice]
+                break
         else:
             print(f"{Colors.RED}Invalid selection. Please try again.{Colors.ENDC}")
     # --- END: Index Selection ---
@@ -315,13 +303,20 @@ def main():
     print(f"   {Colors.GREEN}OS: {os_name}{Colors.ENDC}")
     print(f"   {Colors.GREEN}OS Version: {os_version}{Colors.ENDC}")
 
+    # --- START OF MODIFIED SECTION ---
+    # The 'suricata.eve.flow' path may not exist in all logs, so we get it safely
     flow_data = hit_data.get('suricata', {}).get('eve', {}).get('flow', {})
+    if not flow_data:
+        flow_data = {} # Ensure flow_data is a dictionary even if not found
+    
     flow_details = {
         "packets_to_server": flow_data.get('pkts_toserver'),
         "packets_to_client": flow_data.get('pkts_toclient'),
         "bytes_to_server": flow_data.get('bytes_toserver'),
         "bytes_to_client": flow_data.get('bytes_toclient')
     }
+    # --- END OF MODIFIED SECTION ---
+
     flow_details_filtered = {k: v for k, v in flow_details.items() if v is not None}
 
     primary_details = {
@@ -342,7 +337,12 @@ def main():
 
     print(f"\n{Colors.PURPLE}--- Additional Fields Found in Kibana Hit ---{Colors.ENDC}")
     all_keys = set(hit_data.keys())
-    pulled_top_level_keys = set(primary_details_filtered.keys()) | {'host', 'suricata'}
+    
+    # --- START OF MODIFIED SECTION ---
+    # Only filter out fields that are always present or too complex to be useful at the top level.
+    # This ensures source, destination, etc., are available for selection.
+    pulled_top_level_keys = {'@timestamp', 'host', 'suricata'}
+    # --- END OF MODIFIED SECTION ---
 
     additional_fields_data = {k: hit_data[k] for k in sorted(list(all_keys - pulled_top_level_keys)) if hit_data.get(k)}
 
@@ -396,25 +396,29 @@ def main():
 
     run_intel_choice = input(f"{Colors.ORANGE}Run advanced threat intel script? (y/n): {Colors.ENDC}").lower()
     if run_intel_choice == 'y':
-        suggested_ips = []
+        
+        potential_indicators = set()
+        ip_paths_to_check = [
+            hit_data.get('src_ip'),
+            hit_data.get('dest_ip'),
+            hit_data.get('source', {}).get('ip'),
+            hit_data.get('destination', {}).get('ip'),
+            hit_data.get('alert', {}).get('source', {}).get('ip'),
+            hit_data.get('alert', {}).get('target', {}).get('ip')
+        ]
+        for ip in ip_paths_to_check:
+            if is_public_ip(ip):
+                potential_indicators.add(ip)
 
-        # More robust IP address detection
-        src_ip = hit_data.get('source', {}).get('ip')
-        dst_ip = hit_data.get('destination', {}).get('ip')
+        dns_rrname = hit_data.get('dns', {}).get('rrname')
+        if dns_rrname:
+            potential_indicators.add(dns_rrname)
 
-        # If not found, try the Suricata-specific fields as a fallback
-        if not src_ip or not dst_ip:
-            suricata_eve = hit_data.get('suricata', {}).get('eve', {})
-            if suricata_eve:
-                src_ip = src_ip or suricata_eve.get('src_ip')
-                dst_ip = dst_ip or suricata_eve.get('dest_ip')
+        http_hostname = hit_data.get('http', {}).get('hostname')
+        if http_hostname and not is_ip(http_hostname):
+             potential_indicators.add(http_hostname)
 
-        if src_ip and is_public_ip(src_ip):
-            suggested_ips.append(src_ip)
-        if dst_ip and dst_ip != src_ip and is_public_ip(dst_ip):
-            suggested_ips.append(dst_ip)
-
-        suggested_input = " ".join(suggested_ips)
+        suggested_input = " ".join(sorted(list(potential_indicators)))
 
         prompt_message = f"{Colors.BLUE}Enter IPs/domains to check (e.g., 8.8.8.8 badsite.com)"
         if suggested_input:
@@ -458,25 +462,33 @@ OS Version: {os_version}
     print(f"\n{Colors.PURPLE}{Colors.BOLD}--- Save Options ---{Colors.ENDC}")
     print(f"   1: Save to a new folder in the PISCES directory in your home folder (e.g., ~/PISCES/{sanitized_summary}/)")
     print(f"   2: Save to the current directory ({os.getcwd()}/)")
+    print(f"   3: Save to the OneDrive PISCES/Issues directory (default)")
 
     save_choice = ""
-    while save_choice not in ["1", "2"]:
-        save_choice = input(f"{Colors.BLUE}Enter your choice (default: 1): {Colors.ENDC}") or "1"
-        if save_choice not in ["1", "2"]:
-            print(f"{Colors.RED}Invalid selection. Please enter 1 or 2.{Colors.ENDC}")
+    while save_choice not in ["1", "2", "3"]:
+        save_choice = input(f"{Colors.BLUE}Enter your choice (default: 3): {Colors.ENDC}") or "3"
+        if save_choice not in ["1", "2", "3"]:
+            print(f"{Colors.RED}Invalid selection. Please enter 1, 2, or 3.{Colors.ENDC}")
 
     file_path = ""
     if save_choice == '1':
-        # Path for home directory -> PISCES -> new issue folder
         home_dir = os.path.expanduser('~')
         pisces_base_path = os.path.join(home_dir, 'PISCES')
         issue_folder = os.path.join(pisces_base_path, sanitized_summary)
         os.makedirs(issue_folder, exist_ok=True)
         file_path = os.path.join(issue_folder, file_name)
-    else: # save_choice == '2'
-        # Path for the current working directory
+    elif save_choice == '2':
         file_path = os.path.join(os.getcwd(), file_name)
-
+    elif save_choice == '3':
+        base_path = os.getenv("ISSUES_SAVE_PATH")
+        if not base_path:
+            print(f"{Colors.RED}ERROR: The 'ISSUES_SAVE_PATH' environment variable is not set.{Colors.ENDC}")
+            print(f"{Colors.ORANGE}Please set it on your system to use this option.{Colors.ENDC}")
+            sys.exit(1)
+        
+        issue_folder = os.path.join(base_path, sanitized_summary)
+        os.makedirs(issue_folder, exist_ok=True)
+        file_path = os.path.join(issue_folder, file_name)
 
     print(f"\n{Colors.CYAN}--- Writing Issue to File ---{Colors.ENDC}")
     try:
